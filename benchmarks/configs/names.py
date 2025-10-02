@@ -87,8 +87,7 @@ class UnsupervisedInferenceExperiments:
 
 @dataclass
 class MyExperiments:
-    # Add your experiment names here
-    pass
+    supervised_pretraining_logos_2d_sensor: dict
 
 
 current_module = sys.modules[__name__]
