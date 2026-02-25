@@ -1,0 +1,9 @@
+# @package config.logging
+
+defaults:
+  - default
+
+monty_log_level: SILENT
+python_log_level: WARNING
+monty_handlers: []
+

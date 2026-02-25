@@ -104,10 +104,10 @@ class TheoreticalLimitLMLoggingMixin:
         assert isinstance(self, EvidenceGraphLM)
 
         stats["max_evidence"] = {k: max(v) for k, v in self.evidence.items() if len(v)}
-        stats["target_object_theoretical_limit"] = (
-            self._theoretical_limit_target_object_pose_error()
-        )
-        stats["target_object_pose_error"] = self._mlh_target_object_pose_error()
+        # stats["target_object_theoretical_limit"] = (
+        #     self._theoretical_limit_target_object_pose_error()
+        # )
+        # stats["target_object_pose_error"] = self._mlh_target_object_pose_error()
         hypotheses_updater_telemetry = self._hypotheses_updater_telemetry()
         if hypotheses_updater_telemetry:
             stats["hypotheses_updater_telemetry"] = hypotheses_updater_telemetry

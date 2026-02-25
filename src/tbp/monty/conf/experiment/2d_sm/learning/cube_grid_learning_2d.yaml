@@ -1,0 +1,69 @@
+# @package _global_
+
+defaults:
+  - override /mode: pretrain
+  - override /logging: default
+  - override /dataset: cube_grid
+  - override /monty: patch_and_view_learning_2d
+
+_target_: tbp.monty.frameworks.experiments.pretraining_experiments.MontySupervisedObjectPretrainingExperiment
+
+config:
+  n_train_epochs: 1
+  zoom: 10
+  blur_sigma: 0.1
+  logging:
+    output_dir: ${path.expanduser:${oc.env:MONTY_MODELS}/2d_sensor}
+    python_log_level: INFO
+    run_name: cube_grid_learning
+  env_interface_config:
+    env_init_args:
+      data_path: ${path.expanduser:${oc.env:MONTY_DATA}/compositional_objects}
+      agents:
+        agent_args:
+          resolutions:
+            - [64, 64]
+            - [64, 64]
+          zooms:
+            - ${config.zoom}
+            - 1.0
+    transform:
+      - _target_: tbp.monty.frameworks.environment_utils.transforms.GaussianBlurRGB
+        agent_id: ${monty.agent_id:agent_id_0}
+        sigma: ${config.blur_sigma}
+        sensor_ids: [patch]
+      - _target_: tbp.monty.frameworks.environment_utils.transforms.MissingToMaxDepth
+        agent_id: ${monty.agent_id:agent_id_0}
+        max_depth: 1
+      - _target_: tbp.monty.frameworks.environment_utils.transforms.DepthTo3DLocations
+        agent_id: ${monty.agent_id:agent_id_0}
+        sensor_ids: [patch, view_finder]
+        resolutions:
+          - [64, 64]
+          - [64, 64]
+        world_coord: true
+        zooms:
+          - ${config.zoom}
+          - 1.0
+        get_all_points: true
+        use_semantic_sensor: false
+  train_env_interface_class: ${monty.class:tbp.monty.frameworks.environments.embodied_data.InformedEnvironmentInterface}
+  train_env_interface_args:
+    object_init_sampler:
+      _target_: tbp.monty.frameworks.environments.object_init_samplers.Predefined
+      positions:
+        - [0.0, 1.5, 0.0]
+      rotations: [[0, 0, 0]]
+  monty_config:
+    motor_system_config:
+      motor_system_args:
+        policy:
+          fixed_amount: 1
+    sensor_module_configs:
+      sensor_module_0:
+        sensor_module_args:
+          delta_thresholds: null
+          save_raw_obs: true
+          edge_detection_config:
+            _target_: tbp.monty.frameworks.utils.edge_detection.EdgeDetectionConfig
+            max_center_offset: 2

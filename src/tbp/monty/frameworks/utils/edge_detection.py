@@ -1,0 +1,235 @@
+# Copyright 2025-2026 Thousand Brains Project
+#
+# Copyright may exist in Contributors' modifications
+# and/or contributions to the work.
+#
+# Use of this source code is governed by the MIT
+# license that can be found in the LICENSE file or at
+# https://opensource.org/licenses/MIT.
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+
+import cv2
+import numpy as np
+
+from tbp.monty.frameworks.utils.spatial_arithmetics import (
+    normalize,
+    project_onto_tangent_plane,
+)
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class EdgeDetectionConfig:
+    """Configuration for structure-tensor edge detection.
+
+    Controls the Gaussian smoothing, center-weighted aggregation, thresholds
+    for edge acceptance, and depth-based geometric edge filtering.
+    """
+
+    gaussian_sigma: float = 1.0
+    kernel_size: int = 7
+    edge_threshold: float = 0.1
+    coherence_threshold: float = 0.05
+    radius: float = 14.0
+    sigma_r: float = 7.0
+    depth_edge_threshold: float = 0.01
+    max_center_offset: int | None = None
+
+
+def is_geometric_edge(
+    depth_patch: np.ndarray,
+    edge_theta: float,
+    depth_threshold: float = 0.01,
+) -> bool:
+    """Check if detected edge is geometric (depth discontinuity) vs texture.
+
+    Geometric edges occur at object boundaries or surface creases where depth
+    changes abruptly. Texture edges occur on flat surfaces where depth is
+    continuous. This function computes the depth gradient perpendicular to
+    the detected edge direction and checks if it exceeds a threshold.
+
+    Args:
+        depth_patch: Depth image patch (same size as RGB patch used for edge
+            detection). Values should be in consistent units (e.g., meters).
+        edge_theta: Edge tangent angle in radians from RGB edge detection.
+        depth_threshold: Maximum allowed depth gradient magnitude for texture
+            edges. Edges with perpendicular depth gradient above this value
+            are classified as geometric.
+
+    Returns:
+        True if edge is geometric (should be filtered out), False if texture edge.
+    """
+    depth_dx = cv2.Sobel(depth_patch, cv2.CV_32F, 1, 0, ksize=3)
+    depth_dy = cv2.Sobel(depth_patch, cv2.CV_32F, 0, 1, ksize=3)
+
+    edge_normal_angle = edge_theta + np.pi / 2
+    nx = np.cos(edge_normal_angle)
+    ny = np.sin(edge_normal_angle)
+
+    cy, cx = depth_patch.shape[0] // 2, depth_patch.shape[1] // 2
+    depth_gradient_perp = abs(nx * depth_dx[cy, cx] + ny * depth_dy[cy, cx])
+
+    return depth_gradient_perp > depth_threshold
+
+
+def gradient_to_tangent_angle(gradient_angle: float) -> float:
+    """Convert gradient direction to edge tangent direction and wrap to [0, 2*pi).
+
+    The edge tangent is perpendicular to the gradient direction.
+
+    Args:
+        gradient_angle: Gradient direction in radians (any range)
+
+    Returns:
+        Edge tangent angle in [0, 2*pi) radians
+    """
+    tangent_angle = gradient_angle + np.pi / 2
+    return (tangent_angle + 2 * np.pi) % (2 * np.pi)
+
+
+def edge_angle_to_3d_tangent(
+    theta: float,
+    normal: np.ndarray,
+    world_camera: np.ndarray,
+) -> np.ndarray:
+    """Project a 2D edge angle from an image to a 3D tangent vector on a surface.
+
+    Steps:
+    1. Transform the surface normal from world to camera coordinates
+    2. Build an orthonormal tangent basis (tx, ty) on the surface tangent plane
+       in camera coordinates, aligned with image axes (tx -> +x, ty -> +y down)
+    3. Express the edge direction in this tangent basis using theta
+    4. Transform the resulting tangent vector back to world coordinates
+
+    Args:
+        theta: Edge angle in radians, measured counterclockwise from the image
+            +x axis (rightward). In image coordinates, +x is right and +y is down.
+        normal: Surface normal vector in world frame.
+        world_camera: 3x3 or 4x4 rotation matrix from world to camera coordinates.
+
+    Returns:
+        3D unit tangent vector in world frame.
+    """
+    n_world = normalize(normal)
+
+    world_camera = (
+        world_camera[:3, :3] if world_camera.shape == (4, 4) else world_camera
+    )
+
+    n_cam = world_camera @ n_world
+
+    image_x = np.array([1.0, 0.0, 0.0])
+
+    tx = project_onto_tangent_plane(image_x, n_cam)
+    if np.linalg.norm(tx) < 1e-12:
+        fallback_axis = np.array([0.0, 0.0, 1.0])
+        if abs(np.dot(fallback_axis, n_cam)) > 0.99:
+            fallback_axis = np.array([0.0, 1.0, 0.0])
+        tx = project_onto_tangent_plane(fallback_axis, n_cam)
+    tx = normalize(tx)
+
+    ty = normalize(np.cross(n_cam, tx))
+
+    t_cam = np.cos(theta) * tx + np.sin(theta) * ty
+    t_cam = normalize(t_cam)
+
+    t_world = world_camera.T @ t_cam
+    return normalize(t_world)
+
+
+def compute_weighted_structure_tensor_edge_features(
+    patch: np.ndarray,
+    edge_detection_config: EdgeDetectionConfig | None = None,
+) -> tuple[float, float, float]:
+    """Compute edge features using center-weighted, global-aware structure tensor.
+
+    This function aggregates structure tensor components over a center-biased
+    neighborhood, giving higher weight to pixels closer to the center and pixels
+    with stronger gradients. It applies energy and coherence thresholds to reject
+    weak or cluttered edges.
+
+    Args:
+        patch: RGB or grayscale image patch.
+        edge_detection_config: Edge detection configuration parameters. If None, uses
+            default EdgeDetectionConfig.
+
+    Returns:
+        Tuple of (edge_strength, coherence, tangent_theta):
+            - edge_strength: Magnitude of dominant eigenvalue (0.0 if no edge)
+            - coherence: Edge quality metric in [0, 1] (0.0 if no edge)
+            - tangent_theta: Edge tangent angle in [0, 2*pi) radians (0.0 if no edge)
+    """
+    if edge_detection_config is None:
+        edge_detection_config = EdgeDetectionConfig()
+
+    # Step 1: Compute gradients and local tensor components
+    ksize = edge_detection_config.kernel_size
+    win_sigma = edge_detection_config.gaussian_sigma
+
+    gray = cv2.cvtColor(patch, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+
+    Ix = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)  # noqa: N806
+    Iy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)  # noqa: N806
+
+    Jxx = Ix * Ix  # noqa: N806
+    Jyy = Iy * Iy  # noqa: N806
+    Jxy = Ix * Iy  # noqa: N806
+
+    Jxx = cv2.GaussianBlur(Jxx, (ksize, ksize), win_sigma)  # noqa: N806
+    Jyy = cv2.GaussianBlur(Jyy, (ksize, ksize), win_sigma)  # noqa: N806
+    Jxy = cv2.GaussianBlur(Jxy, (ksize, ksize), win_sigma)  # noqa: N806
+
+    # Step 2a: Center-weighted aggregation
+    r0, c0 = gray.shape[0] // 2, gray.shape[1] // 2
+    h, w = gray.shape
+
+    rows, cols = np.meshgrid(np.arange(h), np.arange(w), indexing="ij")
+    d_squared = (rows - r0) ** 2 + (cols - c0) ** 2
+    d = np.sqrt(d_squared)
+
+    # Step 2b: Radial weight (Gaussian falloff from center)
+    w_r = np.exp(-(d_squared) / (2.0 * edge_detection_config.sigma_r**2))
+    w_r[d > edge_detection_config.radius] = 0.0
+    g = Ix**2 + Iy**2
+    weights = w_r * g
+
+    total_weight = np.sum(weights)
+    if total_weight < 1e-12:
+        return 0.0, 0.0, 0.0
+
+    Jxx_bar = np.sum(weights * Jxx) / total_weight  # noqa: N806
+    Jyy_bar = np.sum(weights * Jyy) / total_weight  # noqa: N806
+    Jxy_bar = np.sum(weights * Jxy) / total_weight  # noqa: N806
+
+    # Step 3: Compute eigenvalues, edge strength, coherence, orientation
+    disc = np.sqrt((Jxx_bar - Jyy_bar) ** 2 + 4.0 * (Jxy_bar**2))
+    lam1 = 0.5 * (Jxx_bar + Jyy_bar + disc)
+    lam2 = 0.5 * (Jxx_bar + Jyy_bar - disc)
+
+    edge_strength = np.sqrt(max(lam1, 0.0))
+    coherence = (lam1 - lam2) / (lam1 + lam2 + 1e-12)
+
+    gradient_theta = 0.5 * np.arctan2(2.0 * Jxy_bar, Jxx_bar - Jyy_bar)
+    tangent_theta = gradient_to_tangent_angle(gradient_theta)
+
+    # Step 4: Check if edge passes near patch center
+    max_center_offset = edge_detection_config.max_center_offset
+    if max_center_offset is not None:
+        nx = np.cos(gradient_theta)
+        ny = np.sin(gradient_theta)
+
+        dr = rows - r0
+        dc = cols - c0
+
+        dist_normal = nx * dc + ny * dr
+        d_center = np.sum(weights * dist_normal) / total_weight
+
+        if abs(d_center) > max_center_offset:
+            return 0.0, 0.0, 0.0
+
+    return float(edge_strength), float(coherence), float(tangent_theta)

@@ -1,0 +1,6 @@
+# @package config.monty_config.motor_system_config.motor_system_args.policy.action_sampler
+actions:
+  - ${monty.class:tbp.monty.frameworks.actions.actions.LookUp}
+  - ${monty.class:tbp.monty.frameworks.actions.actions.LookDown}
+  - ${monty.class:tbp.monty.frameworks.actions.actions.TurnLeft}
+  - ${monty.class:tbp.monty.frameworks.actions.actions.TurnRight}

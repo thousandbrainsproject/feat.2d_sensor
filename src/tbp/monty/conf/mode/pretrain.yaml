@@ -1,0 +1,9 @@
+# @package _global_
+
+defaults:
+  - preset
+
+config:
+  do_train: true
+  do_eval: false
+  supervised_lm_ids: all

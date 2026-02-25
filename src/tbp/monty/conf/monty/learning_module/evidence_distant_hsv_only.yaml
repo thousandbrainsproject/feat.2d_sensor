@@ -1,0 +1,24 @@
+# EvidenceGraphLM for distant agent with hsv-only tolerances.
+# Used for control experiments without principal_curvatures_log.
+
+defaults:
+  - base_evidence
+
+learning_module_args:
+  gsg:
+    _target_: tbp.monty.frameworks.models.goal_state_generation.EvidenceGoalStateGenerator
+    goal_tolerances:
+      location: 0.015
+    elapsed_steps_factor: 10
+    min_post_goal_success_steps: 5
+    x_percent_scale_factor: 0.75
+    desired_object_distance: 0.03
+  hypotheses_updater_args:
+    max_nneighbors: 10
+  feature_weights:
+    patch:
+      hsv: ${np.array:[1, 0.5, 0.5]}
+      pose_vectors: ${np.ones:3}
+  tolerances:
+    patch:
+      hsv: ${np.array:[0.1, 0.2, 0.2]}
