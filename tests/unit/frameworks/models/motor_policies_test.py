@@ -83,46 +83,6 @@ class BasePolicyTest(unittest.TestCase):
         )
         self.assertEqual(self.policy.get_agent_state(state), expected_state)
 
-    def test_is_motor_only_step_returns_false_if_motor_only_step_is_not_in_agent_state(
-        self,
-    ):
-        state = MotorSystemState(
-            {
-                self.agent_id: self.default_agent_state,
-            }
-        )
-        self.assertFalse(self.policy.is_motor_only_step(state))
-
-    def test_is_motor_only_step_returns_true_if_motor_only_step_is_true_in_agent_state(
-        self,
-    ):
-        state = MotorSystemState(
-            {
-                self.agent_id: AgentState(
-                    sensors=self.default_agent_state.sensors,
-                    position=self.default_agent_state.position,
-                    rotation=self.default_agent_state.rotation,
-                    motor_only_step=True,
-                ),
-            }
-        )
-        self.assertTrue(self.policy.is_motor_only_step(state))
-
-    def test_is_motor_only_step_returns_false_if_motor_only_step_is_false_in_agent_state(  # noqa: E501
-        self,
-    ):
-        state = MotorSystemState(
-            {
-                self.agent_id: AgentState(
-                    sensors=self.default_agent_state.sensors,
-                    position=self.default_agent_state.position,
-                    rotation=self.default_agent_state.rotation,
-                    motor_only_step=False,
-                ),
-            }
-        )
-        self.assertFalse(self.policy.is_motor_only_step(state))
-
 
 class SurfacePolicyCurvatureInformedTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -161,14 +121,12 @@ class SurfacePolicyCurvatureInformedTest(unittest.TestCase):
     def test_assign_to_processed_observations_appends_to_tangent_locs_and_tangent_norms_if_last_action_is_orient_vertical(  # noqa: E501
         self,
     ):
-        self.policy.actions = [
-            OrientVertical(
-                agent_id=self.agent_id,
-                rotation_degrees=90,
-                down_distance=1,
-                forward_distance=1,
-            )
-        ]
+        self.policy.last_surface_policy_action = OrientVertical(
+            agent_id=self.agent_id,
+            rotation_degrees=90,
+            down_distance=1,
+            forward_distance=1,
+        )
 
         self.policy.processed_observations = self.state
 
@@ -181,14 +139,12 @@ class SurfacePolicyCurvatureInformedTest(unittest.TestCase):
         self,
     ):
         del self.state.morphological_features["pose_vectors"]
-        self.policy.actions = [
-            OrientVertical(
-                agent_id=self.agent_id,
-                rotation_degrees=90,
-                down_distance=1,
-                forward_distance=1,
-            )
-        ]
+        self.policy.last_surface_policy_action = OrientVertical(
+            agent_id=self.agent_id,
+            rotation_degrees=90,
+            down_distance=1,
+            forward_distance=1,
+        )
 
         self.policy.processed_observations = self.state
 
@@ -199,7 +155,9 @@ class SurfacePolicyCurvatureInformedTest(unittest.TestCase):
     def test_assign_to_processed_observations_does_not_append_to_tangent_locs_and_tangent_norms_if_last_action_is_not_orient_vertical(  # noqa: E501
         self,
     ):
-        self.policy.actions = [LookUp(agent_id=self.agent_id, rotation_degrees=0)]
+        self.policy.last_surface_policy_action = LookUp(
+            agent_id=self.agent_id, rotation_degrees=0
+        )
 
         self.policy.processed_observations = self.state
 
@@ -251,10 +209,9 @@ class PredefinedPolicyReadActionFileTest(unittest.TestCase):
         observations = Observations()
         returned_actions: list[Action] = []
         for _ in range(2 * cycle_length):
-            result = policy.dynamic_call(ctx, observations)
+            result = policy(ctx, observations)
             assert len(result.actions) == 1, "Expected one action"
             returned_actions.append(result.actions[0])
-            policy.post_actions(result.actions)
 
         for i in range(cycle_length):
             first_occurrence = returned_actions[i]

@@ -9,8 +9,15 @@
 # https://opensource.org/licenses/MIT.
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 
-def get_edge_index(graph, previous_node, new_node) -> int | None:
+if TYPE_CHECKING:
+    from tbp.monty.frameworks.models.object_model import GraphObjectModel
+
+
+def get_edge_index(
+    graph: GraphObjectModel, previous_node: int, new_node: int
+) -> int | None:
     """Return the edge index between two nodes in a graph.
 
     Args:
