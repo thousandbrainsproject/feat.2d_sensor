@@ -153,6 +153,10 @@ def compute_weighted_structure_tensor_edge_features(
     with stronger gradients. It applies energy and coherence thresholds to reject
     weak or cluttered edges.
 
+    Reference:
+        Nazar Khan, "Corner Detection" lecture notes, Section on Structure
+        Tensor. http://faculty.pucit.edu.pk/nazarkhan/teaching/Spring2021/CS565/Lectures/lecture6_corner_detection.pdf
+
     Args:
         patch: RGB or grayscale image patch.
         edge_detection_config: Edge detection configuration parameters. If None, uses
