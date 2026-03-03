@@ -59,6 +59,9 @@ class SurfaceSM(SensorModule):
     object. The 2D model is constructed by unrolling the 3D surface into a
     local tangent plane, which requires extracting surface normals and principal
     curvatures at each observation point to perform the projection correctly.
+
+    The 2D position is initialized to the world x,y coordinates. A 2D model is
+    built by accumulating tangent plane displacements.
     """
 
     def __init__(
@@ -128,9 +131,9 @@ class SurfaceSM(SensorModule):
                 f"observations."
             )
 
-        self._previous_location: np.ndarray | None = None
+        self._previous_3d_location: np.ndarray | None = None
         self._tangent_frame: TangentFrame | None = None
-        self._position_2d: np.ndarray = np.zeros(2)
+        self._previous_2d_location: np.ndarray = np.zeros(2)
 
     def pre_episode(self) -> None:
         self._snapshot_telemetry.reset()
@@ -138,9 +141,9 @@ class SurfaceSM(SensorModule):
         self.is_exploring = False
         self.processed_obs = []
         self.states = []
-        self._previous_location = None
+        self._previous_3d_location = None
         self._tangent_frame = None
-        self._position_2d = np.zeros(2)
+        self._previous_2d_location = np.zeros(2)
 
     def update_state(self, agent: AgentState):
         """Update information about the sensor's location and rotation."""
@@ -323,23 +326,26 @@ class SurfaceSM(SensorModule):
         current_location = observed_state.location.copy()
         surface_normal = observed_state.get_surface_normal()
 
-        if self._previous_location is None or surface_normal is None:
+        if self._previous_3d_location is None or surface_normal is None:
             if surface_normal is not None:
                 self._tangent_frame = TangentFrame(surface_normal)
-            self._previous_location = current_location
-            self._position_2d = np.zeros(2)
-            observed_state.location = np.array([0.0, 0.0, 0.0])
+            self._previous_3d_location = current_location
+            # Initialize 2D position to world x,y.
+            self._previous_2d_location = current_location[:2].copy()
+            observed_state.location = np.array(
+                [current_location[0], current_location[1], 0.0]
+            )
             return observed_state
-        displacement_3d = current_location - self._previous_location
+        displacement_3d = current_location - self._previous_3d_location
         d_tan = project_onto_tangent_plane(displacement_3d, surface_normal)
 
         if np.linalg.norm(d_tan) < 1e-12:
-            self._previous_location = current_location.copy()
+            self._previous_3d_location = current_location.copy()
             observed_state.set_displacement(np.zeros(3))
             observed_state.location = np.array(
                 [
-                    self._position_2d[0],
-                    self._position_2d[1],
+                    self._previous_2d_location[0],
+                    self._previous_2d_location[1],
                     0.0,
                 ]
             )
@@ -363,14 +369,14 @@ class SurfaceSM(SensorModule):
                 curvature_pose_vectors,
             )
 
-        self._position_2d += [du, dv]
+        self._previous_2d_location += [du, dv]
         observed_state.set_displacement(np.array([du, dv, 0.0]))
         observed_state.location = np.array(
             [
-                self._position_2d[0],
-                self._position_2d[1],
+                self._previous_2d_location[0],
+                self._previous_2d_location[1],
                 0.0,
             ]
         )
-        self._previous_location = current_location.copy()
+        self._previous_3d_location = current_location.copy()
         return observed_state
