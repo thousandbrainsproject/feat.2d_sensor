@@ -260,7 +260,7 @@ class ComputeWeightedStructureTensorEdgeFeaturesTest(unittest.TestCase):
         )
         self.assertAlmostEqual(strength, 0.0)
         self.assertAlmostEqual(coherence, 0.0)
-        self.assertAlmostEqual(theta, 0.0)
+        self.assertIsNone(theta)
 
     def test_coherence_in_zero_one_range(self):
         patch = self._make_rgb_patch(32, "vertical_edge")

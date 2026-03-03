@@ -145,7 +145,7 @@ def edge_angle_to_3d_tangent(
 def compute_weighted_structure_tensor_edge_features(
     patch: np.ndarray,
     edge_detection_config: EdgeDetectionConfig | None = None,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float | None]:
     """Compute edge features using center-weighted, global-aware structure tensor.
 
     This function aggregates structure tensor components over a center-biased
@@ -166,7 +166,7 @@ def compute_weighted_structure_tensor_edge_features(
         Tuple of (edge_strength, coherence, tangent_theta):
             - edge_strength: Magnitude of dominant eigenvalue (0.0 if no edge)
             - coherence: Edge quality metric in [0, 1] (0.0 if no edge)
-            - tangent_theta: Edge tangent angle in [0, 2*pi) radians (0.0 if no edge)
+            - tangent_theta: Edge tangent angle in [0, 2*pi) radians (None if no edge)
     """
     if edge_detection_config is None:
         edge_detection_config = EdgeDetectionConfig()
@@ -204,7 +204,7 @@ def compute_weighted_structure_tensor_edge_features(
 
     total_weight = np.sum(weights)
     if total_weight < 1e-12:
-        return 0.0, 0.0, 0.0
+        return 0.0, 0.0, None
 
     Jxx_bar = np.sum(weights * Jxx) / total_weight  # noqa: N806
     Jyy_bar = np.sum(weights * Jyy) / total_weight  # noqa: N806
@@ -234,6 +234,6 @@ def compute_weighted_structure_tensor_edge_features(
         d_center = np.sum(weights * dist_normal) / total_weight
 
         if abs(d_center) > max_center_offset:
-            return 0.0, 0.0, 0.0
+            return 0.0, 0.0, None
 
     return float(edge_strength), float(coherence), float(tangent_theta)
