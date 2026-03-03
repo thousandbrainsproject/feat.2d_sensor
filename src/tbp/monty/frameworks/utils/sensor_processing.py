@@ -97,6 +97,9 @@ def directional_curvature(
 ) -> float:
     """Compute normal curvature in a given direction via Euler's formula.
 
+    Returns the curvature of the surface along a particular direction, as
+    opposed to the maximum (k1) or minimum (k2) principal curvatures.
+
     k(theta) = k1 * cos^2(theta) + k2 * sin^2(theta)
 
     where theta is the angle between ``movement_direction`` and the first
