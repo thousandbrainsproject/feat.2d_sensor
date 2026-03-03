@@ -75,7 +75,9 @@ class SurfaceSM(SensorModule):
             pc1_is_pc2_threshold: Maximum difference between pc1 and pc2 to be
                 classified as being roughly the same (ignore curvature directions).
                 Defaults to 10.
-            is_surface_sm: Whether this sensor module is a surface sensor.
+            is_surface_sm: Surface SMs do not require that the central pixel is
+                "on object" in order to process the observation (i.e., extract
+                features). Defaults to False.
             edge_detection_config: Configuration for structure-tensor edge
                 detection. If None, uses EdgeDetectionConfig defaults.
             noise_params: Dictionary of noise amount for each feature.
