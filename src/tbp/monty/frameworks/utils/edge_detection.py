@@ -108,7 +108,7 @@ def edge_angle_to_3d_tangent(
 
     Args:
         theta: Edge angle in radians, measured counterclockwise from the image
-            +x axis (rightward). In image coordinates, +x is right and +y is down.
+            In image coordinates, +x is right and +y is down.
         normal: Surface normal vector in world frame.
         world_camera: 3x3 or 4x4 rotation matrix from world to camera coordinates.
 
