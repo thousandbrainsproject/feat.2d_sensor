@@ -252,9 +252,8 @@ class SurfaceSM(SensorModule):
                 self.edge_detection_config.depth_edge_threshold,
             )
         ):
-            edge_strength = 0.0
-            coherence = 0.0
-            edge_orientation = 0.0
+            state.morphological_features["pose_from_edge"] = False
+            return state
 
         strength_threshold = self.edge_detection_config.edge_threshold
         coherence_threshold = self.edge_detection_config.coherence_threshold
