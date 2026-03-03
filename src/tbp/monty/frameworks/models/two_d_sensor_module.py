@@ -222,13 +222,11 @@ class SurfaceSM(SensorModule):
             otherwise returns the original state unchanged.
         """
         if "pose_vectors" not in state.morphological_features:
-            state.morphological_features["pose_from_edge"] = False
             return state
 
         try:
             surface_normal = normalize(state.morphological_features["pose_vectors"][0])
         except ValueError:
-            state.morphological_features["pose_from_edge"] = False
             return state
 
         if rgba_image.shape[2] == 4:
@@ -252,7 +250,6 @@ class SurfaceSM(SensorModule):
                 self.edge_detection_config.depth_edge_threshold,
             )
         ):
-            state.morphological_features["pose_from_edge"] = False
             return state
 
         strength_threshold = self.edge_detection_config.edge_threshold
@@ -262,7 +259,6 @@ class SurfaceSM(SensorModule):
         )
 
         if not has_edge:
-            state.morphological_features["pose_from_edge"] = False
             return state
 
         edge_tangent = edge_angle_to_3d_tangent(
@@ -272,7 +268,6 @@ class SurfaceSM(SensorModule):
             edge_tangent = normalize(edge_tangent)
             edge_perp = normalize(np.cross(surface_normal, edge_tangent))
         except ValueError:
-            state.morphological_features["pose_from_edge"] = False
             return state
 
         state.morphological_features["pose_vectors"] = np.vstack(
@@ -283,7 +278,6 @@ class SurfaceSM(SensorModule):
             ]
         )
         state.morphological_features["pose_fully_defined"] = True
-        state.morphological_features["pose_from_edge"] = True
         state.non_morphological_features["pose_fully_defined"] = True
 
         if "edge_strength" in self.features:

@@ -17,7 +17,6 @@ sensor_module_0:
       - hsv
       - edge_strength
       - coherence
-      - pose_from_edge
       - mean_depth
       - min_depth
     delta_thresholds:
