@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import numpy as np
@@ -46,6 +47,8 @@ from tbp.monty.frameworks.utils.spatial_arithmetics import (
     normalize,
     project_onto_tangent_plane,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SurfaceSM(SensorModule):
@@ -112,6 +115,15 @@ class SurfaceSM(SensorModule):
         self.sensor_module_id = sensor_module_id
         self.save_raw_obs = save_raw_obs
         self.edge_detection_config = edge_detection_config or EdgeDetectionConfig()
+
+        edge_features = {"edge_strength", "coherence"}
+        missing = edge_features - set(features)
+        if missing:
+            logger.warning(
+                f"SurfaceSM '{sensor_module_id}' does not include {missing} "
+                f"in its features list. Edge features will not appear in "
+                f"observations."
+            )
 
         self._previous_location: np.ndarray | None = None
         self._tangent_frame: TangentFrame | None = None
