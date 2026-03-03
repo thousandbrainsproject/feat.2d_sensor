@@ -52,10 +52,13 @@ logger = logging.getLogger(__name__)
 
 
 class SurfaceSM(SensorModule):
-    """Sensor Module that turns Habitat camera obs into features at locations.
+    """Sensor Module that extracts edges and other features at 2D locations.
 
-    Currently extracts all the same features as CameraSM with additional features
-    related to 2D edges.
+    Extends the base sensor module to detect edges on an object's surface (e.g.
+    edges of a logo on a cup) and build a corresponding 2D model of the 3D
+    object. The 2D model is constructed by unrolling the 3D surface into a
+    local tangent plane, which requires extracting surface normals and principal
+    curvatures at each observation point to perform the projection correctly.
     """
 
     def __init__(
