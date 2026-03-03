@@ -185,7 +185,7 @@ class SurfaceSM(SensorModule):
             # LM, even in e.g. pre-training experiments that might otherwise do so
             observed_state.use_state = False
 
-        self._update_2d_position_and_displacement(
+        observed_state = self._update_2d_position_and_displacement(
             observed_state, curvature_pose_vectors
         )
 
@@ -298,20 +298,20 @@ class SurfaceSM(SensorModule):
         self,
         observed_state: State,
         curvature_pose_vectors: np.ndarray | None,
-    ) -> None:
+    ) -> State:
         """Project the 3D step onto the tangent plane to get a 2D displacement.
-
-        Updates ``observed_state`` in place: sets its displacement and replaces
-        its location with the running 2D position.
 
         Args:
             observed_state: State to update with 2D displacement and position.
             curvature_pose_vectors: Curvature-based pose vectors used for
                 arc-length correction. If None, chord length is used as-is.
+
+        Returns:
+            The updated state with 2D position and displacement.
         """
         if not observed_state.get_on_object():
             observed_state.set_displacement(np.zeros(3))
-            return
+            return observed_state
 
         current_location = observed_state.location.copy()
         surface_normal = observed_state.get_surface_normal()
@@ -322,7 +322,7 @@ class SurfaceSM(SensorModule):
             self._previous_location = current_location
             self._position_2d = np.zeros(2)
             observed_state.location = np.array([0.0, 0.0, 0.0])
-            return
+            return observed_state
         displacement_3d = current_location - self._previous_location
         d_tan = project_onto_tangent_plane(displacement_3d, surface_normal)
 
@@ -336,7 +336,7 @@ class SurfaceSM(SensorModule):
                     0.0,
                 ]
             )
-            return
+            return observed_state
 
         self._tangent_frame.transport(surface_normal)
 
@@ -366,3 +366,4 @@ class SurfaceSM(SensorModule):
             ]
         )
         self._previous_location = current_location.copy()
+        return observed_state
