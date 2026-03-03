@@ -293,7 +293,6 @@ class SurfaceSM(SensorModule):
             ]
         )
         state.morphological_features["pose_fully_defined"] = True
-        state.non_morphological_features["pose_fully_defined"] = True
 
         if "edge_strength" in self.features:
             state.non_morphological_features["edge_strength"] = edge_strength
