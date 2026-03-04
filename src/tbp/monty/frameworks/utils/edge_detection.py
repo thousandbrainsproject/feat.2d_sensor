@@ -99,46 +99,36 @@ def edge_angle_to_3d_tangent(
 ) -> np.ndarray:
     """Project a 2D edge angle from an image to a 3D tangent vector on a surface.
 
-    Steps:
-    1. Transform the surface normal from world to camera coordinates
-    2. Build an orthonormal tangent basis (tx, ty) on the surface tangent plane
-       in camera coordinates, aligned with image axes (tx -> +x, ty -> +y down)
-    3. Express the edge direction in this tangent basis using theta
-    4. Transform the resulting tangent vector back to world coordinates
+    Builds an orthonormal tangent basis (tx, ty) on the surface, aligned with
+    the camera's image axes, then combines them using theta.
 
     Args:
-        theta: Edge angle in radians, measured counterclockwise from the image
-            In image coordinates, +x is right and +y is down.
+        theta: Edge angle in radians, measured counterclockwise image x axis.
+            In an image, +x is right and +y is down.
         normal: Surface normal vector in world frame.
-        world_camera: 3x3 or 4x4 rotation matrix from world to camera coordinates.
+        world_camera: 4x4 world-to-camera transformation matrix.
 
     Returns:
         3D unit tangent vector in world frame.
     """
     n_world = normalize(normal)
 
-    world_camera = (
-        world_camera[:3, :3] if world_camera.shape == (4, 4) else world_camera
-    )
+    R = world_camera[:3, :3]  # noqa: N806
 
-    n_cam = world_camera @ n_world
+    # Camera x-axis ("image right") expressed in world coordinates
+    image_x_world = R.T @ np.array([1.0, 0.0, 0.0])
 
-    image_x = np.array([1.0, 0.0, 0.0])
-
-    tx = project_onto_tangent_plane(image_x, n_cam)
+    tx = project_onto_tangent_plane(image_x_world, n_world)
     if np.linalg.norm(tx) < 1e-12:
-        fallback_axis = np.array([0.0, 0.0, 1.0])
-        if abs(np.dot(fallback_axis, n_cam)) > 0.99:
-            fallback_axis = np.array([0.0, 1.0, 0.0])
-        tx = project_onto_tangent_plane(fallback_axis, n_cam)
+        fallback = R.T @ np.array([0.0, 0.0, 1.0])
+        if abs(np.dot(fallback, n_world)) > 0.99:
+            fallback = R.T @ np.array([0.0, 1.0, 0.0])
+        tx = project_onto_tangent_plane(fallback, n_world)
     tx = normalize(tx)
 
-    ty = normalize(np.cross(n_cam, tx))
+    ty = normalize(np.cross(n_world, tx))
 
-    t_cam = np.cos(theta) * tx + np.sin(theta) * ty
-    t_cam = normalize(t_cam)
-
-    t_world = world_camera.T @ t_cam
+    t_world = np.cos(theta) * tx + np.sin(theta) * ty
     return normalize(t_world)
 
 
