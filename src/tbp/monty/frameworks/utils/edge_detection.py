@@ -62,7 +62,7 @@ def is_geometric_edge(
             are classified as geometric.
 
     Returns:
-        True if edge is geometric (should be filtered out), False if texture edge.
+        True if edge is geometric, False if texture edge.
     """
     depth_dx = cv2.Sobel(depth_patch, cv2.CV_32F, 1, 0, ksize=3)
     depth_dy = cv2.Sobel(depth_patch, cv2.CV_32F, 0, 1, ksize=3)
