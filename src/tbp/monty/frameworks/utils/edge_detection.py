@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Optional, Tuple
 
 import cv2
 import numpy as np
@@ -38,7 +39,7 @@ class EdgeDetectionConfig:
     radius: float = 14.0
     sigma_r: float = 7.0
     depth_edge_threshold: float = 0.01
-    max_center_offset: int | None = None
+    max_center_offset: Optional[int] = None
 
 
 def is_geometric_edge(
@@ -134,8 +135,8 @@ def edge_angle_to_3d_tangent(
 
 def compute_weighted_structure_tensor_edge_features(
     patch: np.ndarray,
-    edge_detection_config: EdgeDetectionConfig | None = None,
-) -> tuple[float, float, float | None]:
+    edge_detection_config: Optional[EdgeDetectionConfig] = None,
+) -> Tuple[float, float, Optional[float]]:
     """Compute edge features using center-weighted, global-aware structure tensor.
 
     This function aggregates structure tensor components over a center-biased
