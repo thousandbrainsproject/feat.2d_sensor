@@ -153,14 +153,13 @@ class SurfaceSM(SensorModule):
             + qt.rotate_vectors(agent.rotation, sensor.position),
             rotation=agent.rotation * sensor.rotation,
         )
-        self.motor_only_step = agent.motor_only_step
 
     def state_dict(self):
         state_dict = self._snapshot_telemetry.state_dict()
         state_dict.update(processed_observations=self.processed_obs)
         return state_dict
 
-    def step(self, ctx: RuntimeContext, data) -> State:
+    def step(self, ctx: RuntimeContext, data, motor_only_step: bool = False) -> State:
         """Turn raw observations into dict of features at location.
 
         Args:
@@ -198,7 +197,7 @@ class SurfaceSM(SensorModule):
         if observed_state.use_state:
             observed_state = self._message_noise(observed_state, rng=ctx.rng)
 
-        if self.motor_only_step:
+        if motor_only_step:
             # Set interesting-features flag to False, as should not be passed to
             # LM, even in e.g. pre-training experiments that might otherwise do so
             observed_state.use_state = False
