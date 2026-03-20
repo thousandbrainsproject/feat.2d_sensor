@@ -322,24 +322,24 @@ class TwoDSensorModule(SensorModule):
             observed_state.set_displacement(np.zeros(3))
             return observed_state
 
-        current_location = observed_state.location.copy()
+        current_3d_location = observed_state.location.copy()
         surface_normal = observed_state.get_surface_normal()
 
         if self._previous_3d_location is None or surface_normal is None:
             if surface_normal is not None:
                 self._tangent_frame = TangentFrame(surface_normal)
-            self._previous_3d_location = current_location
+            self._previous_3d_location = current_3d_location
             # Initialize 2D position to world x,y.
-            self._previous_2d_location = current_location[:2].copy()
+            self._previous_2d_location = current_3d_location[:2].copy()
             observed_state.location = np.array(
-                [current_location[0], current_location[1], 0.0]
+                [current_3d_location[0], current_3d_location[1], 0.0]
             )
             return observed_state
-        displacement_3d = current_location - self._previous_3d_location
+        displacement_3d = current_3d_location - self._previous_3d_location
         d_tan = project_onto_tangent_plane(displacement_3d, surface_normal)
 
         if np.linalg.norm(d_tan) < 1e-12:
-            self._previous_3d_location = current_location.copy()
+            self._previous_3d_location = current_3d_location.copy()
             observed_state.set_displacement(np.zeros(3))
             observed_state.location = np.array(
                 [
@@ -377,5 +377,5 @@ class TwoDSensorModule(SensorModule):
                 0.0,
             ]
         )
-        self._previous_3d_location = current_location.copy()
+        self._previous_3d_location = current_3d_location.copy()
         return observed_state
