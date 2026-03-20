@@ -1,7 +1,7 @@
 # @package _global_
 #
 # Same as cube_grid_learning_2d but uses HabitatSM (3D world coordinates)
-# instead of SurfaceSM (2D surface parametric coordinates).
+# instead of TwoDSensorModule (2D surface parametric coordinates).
 # No edge detection — focuses on standard features.
 
 defaults:

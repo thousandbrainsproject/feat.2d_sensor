@@ -51,7 +51,7 @@ from tbp.monty.frameworks.utils.spatial_arithmetics import (
 logger = logging.getLogger(__name__)
 
 
-class SurfaceSM(SensorModule):
+class TwoDSensorModule(SensorModule):
     """Sensor Module that extracts edges and other features at 2D locations.
 
     Extends the base sensor module to detect edges on an object's surface (e.g.
@@ -126,7 +126,7 @@ class SurfaceSM(SensorModule):
         missing = edge_features - set(features)
         if missing:
             logger.warning(
-                f"SurfaceSM '{sensor_module_id}' does not include {missing} "
+                f"TwoDSensorModule '{sensor_module_id}' does not include {missing} "
                 f"in its features list. Edge features will not appear in "
                 f"observations."
             )
