@@ -47,12 +47,15 @@ def is_geometric_edge(
     edge_theta: float,
     depth_threshold: float = 0.01,
 ) -> bool:
-    """Check if detected edge is geometric (depth discontinuity) vs texture.
+    """Check if detected edge is a geometric edge (depth discontinuity) vs a 2D texture edge.
 
     Geometric edges occur at object boundaries or surface creases where depth
-    changes abruptly. Texture edges occur on flat surfaces where depth is
-    continuous. This function computes the depth gradient perpendicular to
-    the detected edge direction and checks if it exceeds a threshold.
+    changes abruptly. Texture edges will be detected wherever there is an abrupt
+    discontinuity in image intensity. We will use detected geometric edges to identify
+    candidate texture edges that do not correspond to a 2D surface (such as where the
+    red handle of a mug is seen against the black background of a simulator's void).
+    This function computes the depth gradient perpendicular to the detected edge
+    direction and checks if it exceeds a threshold.
 
     Args:
         depth_patch: Depth image patch (same size as RGB patch used for edge
