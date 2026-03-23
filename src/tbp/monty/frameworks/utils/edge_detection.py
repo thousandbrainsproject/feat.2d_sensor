@@ -174,7 +174,7 @@ def compute_weighted_structure_tensor_edge_features(
         edge_detection_config = EdgeDetectionConfig()
 
     # Step 1: Compute gradients and local tensor components
-    ksize = edge_detection_config.kernel_size
+    blur_ksize = edge_detection_config.kernel_size
     win_sigma = edge_detection_config.gaussian_sigma
 
     gray = cv2.cvtColor(patch, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
@@ -186,9 +186,9 @@ def compute_weighted_structure_tensor_edge_features(
     Jyy = Iy * Iy  # noqa: N806
     Jxy = Ix * Iy  # noqa: N806
 
-    Jxx = cv2.GaussianBlur(Jxx, (ksize, ksize), win_sigma)  # noqa: N806
-    Jyy = cv2.GaussianBlur(Jyy, (ksize, ksize), win_sigma)  # noqa: N806
-    Jxy = cv2.GaussianBlur(Jxy, (ksize, ksize), win_sigma)  # noqa: N806
+    Jxx = cv2.GaussianBlur(Jxx, (blur_ksize, blur_ksize), win_sigma)  # noqa: N806
+    Jyy = cv2.GaussianBlur(Jyy, (blur_ksize, blur_ksize), win_sigma)  # noqa: N806
+    Jxy = cv2.GaussianBlur(Jxy, (blur_ksize, blur_ksize), win_sigma)  # noqa: N806
 
     # Step 2a: Center-weighted aggregation
     r0, c0 = gray.shape[0] // 2, gray.shape[1] // 2
