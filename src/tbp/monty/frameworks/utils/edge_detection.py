@@ -144,8 +144,8 @@ def compute_weighted_structure_tensor_edge_features(
 
     This function aggregates structure tensor components over a center-biased
     neighborhood, giving higher weight to pixels closer to the center and pixels
-    with stronger gradients. It applies energy and coherence thresholds to reject
-    weak or cluttered edges.
+    with stronger gradients. Returns edge strength and coherence (in addition to
+    orientation) for caller to threshold (i.e. reject weak or cluttered edges).
 
     Reference:
         Nazar Khan, "Corner Detection" lecture notes, Section on Structure
