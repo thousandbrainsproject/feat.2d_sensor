@@ -177,6 +177,36 @@ class DirectionalCurvatureTest(unittest.TestCase):
         )
         self.assertAlmostEqual(result, -3.0)
 
+    def test_out_of_plane_direction_raises(self):
+        with self.assertRaises(ValueError):
+            directional_curvature(
+                np.array([0.0, 0.0, 1.0]),
+                k1=4.0,
+                k2=2.0,
+                dir1=self.dir1,
+                dir2=self.dir2,
+            )
+
+    def test_partially_out_of_plane_direction_raises(self):
+        with self.assertRaises(ValueError):
+            directional_curvature(
+                np.array([1.0, 0.0, 1.0]),
+                k1=4.0,
+                k2=2.0,
+                dir1=self.dir1,
+                dir2=self.dir2,
+            )
+
+    def test_nearly_in_plane_direction_passes(self):
+        result = directional_curvature(
+            np.array([1.0, 0.0, 1e-8]),
+            k1=4.0,
+            k2=2.0,
+            dir1=self.dir1,
+            dir2=self.dir2,
+        )
+        self.assertAlmostEqual(result, 4.0)
+
     def test_opposite_direction_same_result(self):
         fwd = directional_curvature(
             np.array([1.0, 1.0, 0.0]),

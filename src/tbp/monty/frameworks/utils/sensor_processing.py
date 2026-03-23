@@ -120,7 +120,9 @@ def directional_curvature(
         Normal curvature in the given direction.
 
     Raises:
-        ValueError: If dir1 and dir2 are not orthogonal.
+        ValueError: If dir1 and dir2 are not orthogonal, or if
+            movement_direction does not lie in the plane spanned by dir1
+            and dir2.
     """
     if abs(np.dot(dir1, dir2)) > 1e-6:
         raise ValueError(
@@ -132,6 +134,15 @@ def directional_curvature(
         return 0.0
 
     move_hat = movement_direction / movement_norm
+
+    plane_normal = np.cross(dir1, dir2)
+    out_of_plane = abs(np.dot(move_hat, plane_normal))
+    if out_of_plane > 1e-6:
+        raise ValueError(
+            f"movement_direction must lie in the plane of dir1 and dir2 "
+            f"(out-of-plane component = {out_of_plane:.6f})"
+        )
+
     cos_theta_squared = np.dot(move_hat, dir1) ** 2
     sin_theta_squared = 1.0 - cos_theta_squared
     return k1 * cos_theta_squared + k2 * sin_theta_squared
