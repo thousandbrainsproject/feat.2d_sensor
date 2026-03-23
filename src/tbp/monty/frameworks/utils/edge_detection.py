@@ -198,7 +198,7 @@ def compute_weighted_structure_tensor_edge_features(
     d_squared = (rows - r0) ** 2 + (cols - c0) ** 2
     d = np.sqrt(d_squared)
 
-    # Step 2b: Radial weight (Gaussian falloff from center)
+    # Step 2b: Radial and Gradient Strength Weighting
     w_r = np.exp(-(d_squared) / (2.0 * edge_detection_config.sigma_r**2))
     w_r[d > edge_detection_config.radius] = 0.0
     g = Ix**2 + Iy**2
