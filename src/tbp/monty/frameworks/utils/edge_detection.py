@@ -161,6 +161,14 @@ def compute_weighted_structure_tensor_edge_features(
             - edge_strength: Magnitude of dominant eigenvalue (0.0 if no edge)
             - coherence: Edge quality metric in [0, 1] (0.0 if no edge)
             - tangent_theta: Edge tangent angle in [0, 2*pi) radians (None if no edge)
+
+    Notes:
+        1. The Gaussian blur (Step 1) convolves all pixels in the patch with a
+            Gaussian so as to effectively average their values by neighbors.
+        2. The radial weight (Step 2b) is a single Gaussian placed at the center
+            of the patch, and determines how much gradients associated with
+            different pixels will be weighted based on their displacement from
+            the center.
     """
     if edge_detection_config is None:
         edge_detection_config = EdgeDetectionConfig()
