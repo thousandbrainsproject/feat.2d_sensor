@@ -140,6 +140,19 @@ class TangentFrameTest(unittest.TestCase):
         self.assertAlmostEqual(np.dot(u, n2), 0.0, places=10)
         self.assertAlmostEqual(np.dot(v, n2), 0.0, places=10)
 
+    def test_transport_90_degrees_produces_expected_basis(self):
+        n1 = np.array([0.0, 0.0, 1.0])
+        n2 = np.array([0.0, 1.0, 0.0])
+        frame = TangentFrame(n1)
+
+        np.testing.assert_array_almost_equal(frame.basis_u, [1, 0, 0])
+        np.testing.assert_array_almost_equal(frame.basis_v, [0, 1, 0])
+
+        frame.transport(n2)
+
+        np.testing.assert_array_almost_equal(frame.basis_u, [1, 0, 0])
+        np.testing.assert_array_almost_equal(frame.basis_v, [0, 0, -1])
+
     def test_accumulated_transports_stay_orthonormal(self):
         rng = np.random.RandomState(42)
         n = normalize(rng.randn(3))
