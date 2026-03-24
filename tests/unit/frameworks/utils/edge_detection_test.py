@@ -104,7 +104,7 @@ class EdgeAngleTo3dTangentTest(unittest.TestCase):
     def test_identity_camera_z_normal_theta_zero(self):
         result = edge_angle_to_3d_tangent(
             theta=0.0,
-            normal=np.array([0.0, 0.0, 1.0]),
+            surface_normal=np.array([0.0, 0.0, 1.0]),
             world_camera=np.eye(4),
         )
         np.testing.assert_array_almost_equal(result, [1.0, 0.0, 0.0])
@@ -112,7 +112,7 @@ class EdgeAngleTo3dTangentTest(unittest.TestCase):
     def test_identity_camera_z_normal_theta_pi_half(self):
         result = edge_angle_to_3d_tangent(
             theta=np.pi / 2,
-            normal=np.array([0.0, 0.0, 1.0]),
+            surface_normal=np.array([0.0, 0.0, 1.0]),
             world_camera=np.eye(4),
         )
         # ty = cross(n, tx) = cross([0,0,1], [1,0,0]) = [0,1,0]
@@ -144,12 +144,12 @@ class EdgeAngleTo3dTangentTest(unittest.TestCase):
         cam_with_translation[:3, 3] = [1.0, 2.0, 3.0]
         result = edge_angle_to_3d_tangent(
             theta=0.0,
-            normal=np.array([0.0, 0.0, 1.0]),
+            surface_normal=np.array([0.0, 0.0, 1.0]),
             world_camera=cam_with_translation,
         )
         result_identity = edge_angle_to_3d_tangent(
             theta=0.0,
-            normal=np.array([0.0, 0.0, 1.0]),
+            surface_normal=np.array([0.0, 0.0, 1.0]),
             world_camera=np.eye(4),
         )
         # Translation should not affect the tangent direction
@@ -159,7 +159,7 @@ class EdgeAngleTo3dTangentTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             edge_angle_to_3d_tangent(
                 theta=0.0,
-                normal=np.array([0.0, 0.0, 0.0]),
+                surface_normal=np.array([0.0, 0.0, 0.0]),
                 world_camera=np.eye(4),
             )
 
