@@ -65,7 +65,8 @@ def compute_arc_from_tangent_projection(
 
     Returns:
         Estimated signed arc length. Returns projection_length unchanged if
-        curvature is negligible or |k * p| >= 1.0 (arcsin domain guard).
+        |k * p| < threshold (arc-chord difference is negligible) or
+        |k * p| >= 1.0 (arcsin domain guard).
     """
     abs_k = abs(curvature)
     abs_p = abs(projection_length)
