@@ -127,7 +127,6 @@ class TangentFrame:
         normals_are_parallel = abs(cos_angle) > 1.0 - 1e-10
         if normals_are_parallel:
             if cos_angle < 0:
-                self._u = -self._u
                 self._v = -self._v
             self._normal = new_normal.copy()
             return
