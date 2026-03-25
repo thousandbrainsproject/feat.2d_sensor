@@ -199,6 +199,8 @@ def compute_weighted_structure_tensor_edge_features(
     d = np.sqrt(d_squared)
 
     # Step 2b: Radial and Gradient Strength Weighting
+    # Include gradient magnitude in weights so strong edges slightly off-center
+    # still contribute meaningfully rather than being suppressed by radial falloff.
     w_r = np.exp(-(d_squared) / (2.0 * edge_detection_config.sigma_r**2))
     w_r[d > edge_detection_config.radius] = 0.0
     g = Ix**2 + Iy**2
