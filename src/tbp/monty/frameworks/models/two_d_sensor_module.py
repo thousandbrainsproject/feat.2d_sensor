@@ -55,8 +55,9 @@ class TwoDSensorModule(SensorModule):
     """Sensor Module that extracts edges and other features at 2D locations.
 
     Extends the base sensor module to detect edges on an object's surface (e.g.
-    edges of a logo on a cup) and build a corresponding 2D model of the 3D
-    object. The 2D model is constructed by unrolling the 3D surface into a
+    edges of a logo on a cup) and enable an associated LM to build a
+    corresponding 2D model of the 3D object. Movements in 2D are estimated by
+    unrolling the 3D surface into a
     local tangent plane, which requires extracting surface normals and principal
     curvatures at each observation point to perform the projection correctly.
 
