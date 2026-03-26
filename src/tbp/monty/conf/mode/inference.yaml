@@ -1,9 +1,0 @@
-# @package _global_
-
-defaults:
-  - preset
-
-config:
-  do_train: false
-  do_eval: true
-  python_log_level: DEBUG
