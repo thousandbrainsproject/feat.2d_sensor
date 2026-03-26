@@ -1,6 +1,0 @@
-# @package config.logging
-
-defaults:
-  - default
-
-output_dir: ${path.expanduser:${oc.env:MONTY_LOGS}/projects/evidence_eval_runs/logs}
