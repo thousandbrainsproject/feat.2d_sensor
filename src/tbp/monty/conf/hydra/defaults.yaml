@@ -1,4 +1,0 @@
-run:
-  dir: ${config.logging.output_dir}/${config.logging.run_name}/${now:%Y-%m-%d_%H-%M-%S}
-sweep:
-  dir: ${config.logging.output_dir}/${config.logging.run_name}/${now:%Y-%m-%d_%H-%M-%S}
