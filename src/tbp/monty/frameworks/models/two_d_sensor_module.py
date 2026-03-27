@@ -270,7 +270,7 @@ class TwoDSensorModule(SensorModule):
         ):
             return state
 
-        strength_threshold = self.edge_detection_config.edge_threshold
+        strength_threshold = self.edge_detection_config.strength_threshold
         coherence_threshold = self.edge_detection_config.coherence_threshold
         has_edge = (edge_strength > strength_threshold) and (
             coherence > coherence_threshold

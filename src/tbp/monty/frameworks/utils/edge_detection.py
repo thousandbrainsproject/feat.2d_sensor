@@ -34,8 +34,8 @@ class EdgeDetectionConfig:
 
     gaussian_sigma: float = 1.0
     kernel_size: int = 7
-    edge_threshold: float = 0.1
-    coherence_threshold: float = 0.05
+    strength_threshold: float = 0.1
+    coherence_threshold: float = 0.5
     radius: float = 14.0
     sigma_r: float = 7.0
     depth_edge_threshold: float = 0.01
