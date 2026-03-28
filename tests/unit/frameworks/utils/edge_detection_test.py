@@ -110,15 +110,15 @@ class EdgeAngleTo2dPoseTest(unittest.TestCase):
     def test_identity_camera_theta_pi_half(self):
         pose = edge_angle_to_2d_pose(theta=np.pi / 2, world_camera=np.eye(4))
         np.testing.assert_array_almost_equal(pose[0], [0, 0, 1])
-        np.testing.assert_array_almost_equal(pose[1], [0, 1, 0])
-        np.testing.assert_array_almost_equal(pose[2], [-1, 0, 0])
+        np.testing.assert_array_almost_equal(pose[1], [0, -1, 0])
+        np.testing.assert_array_almost_equal(pose[2], [1, 0, 0])
 
     def test_identity_camera_theta_pi_quarter(self):
         pose = edge_angle_to_2d_pose(theta=np.pi / 4, world_camera=np.eye(4))
         s2 = np.sqrt(2) / 2
         np.testing.assert_array_almost_equal(pose[0], [0, 0, 1])
-        np.testing.assert_array_almost_equal(pose[1], [s2, s2, 0])
-        np.testing.assert_array_almost_equal(pose[2], [-s2, s2, 0])
+        np.testing.assert_array_almost_equal(pose[1], [s2, -s2, 0])
+        np.testing.assert_array_almost_equal(pose[2], [s2, s2, 0])
 
     def test_normal_always_001(self):
         for theta in [0, np.pi / 6, np.pi / 3, np.pi, 5.0]:

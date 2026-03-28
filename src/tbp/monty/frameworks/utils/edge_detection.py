@@ -107,7 +107,8 @@ def edge_angle_to_2d_pose(
     projected into the xy-plane to determine the reference direction.
 
     Args:
-        theta: Edge angle in radians (counterclockwise from image x-axis).
+        theta: Edge angle in radians in image coordinates (y-down), measured
+            counterclockwise from the image x-axis.
         world_camera: 4x4 world-to-camera transformation matrix.
 
     Returns:
@@ -117,7 +118,7 @@ def edge_angle_to_2d_pose(
     R = world_camera[:3, :3]  # noqa: N806
     image_x_world = R.T @ np.array([1.0, 0.0, 0.0])
     ref_angle = np.arctan2(image_x_world[1], image_x_world[0])
-    world_theta = ref_angle + theta
+    world_theta = ref_angle - theta
 
     cos_t, sin_t = np.cos(world_theta), np.sin(world_theta)
     return np.array([
