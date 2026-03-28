@@ -387,7 +387,7 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
                 "on_object": False,
             }
         )
-        result = self.sm._update_2d_position_and_displacement(state, None)
+        result = self.sm._update_2d_position_and_displacement(state, None, None)
         nptest.assert_array_equal(
             result.displacement["displacement"], np.zeros(3)
         )
@@ -395,8 +395,9 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
     def test_first_obs_initializes_from_world_xy(self):
         state = make_state(location=np.array([4.0, 5.0, 6.0]))
         self.sm._previous_3d_location = None
+        sn = state.get_surface_normal()
 
-        result = self.sm._update_2d_position_and_displacement(state, None)
+        result = self.sm._update_2d_position_and_displacement(state, None, sn)
         nptest.assert_array_equal(result.location, [4.0, 5.0, 0.0])
         nptest.assert_array_equal(self.sm._previous_2d_location, [4.0, 5.0])
         self.assertIsNotNone(self.sm._tangent_frame)
@@ -404,8 +405,9 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
     def test_first_obs_creates_tangent_frame_from_normal(self):
         state = make_state(location=np.array([4.0, 5.0, 6.0]))
         self.sm._previous_3d_location = None
+        sn = state.get_surface_normal()
 
-        self.sm._update_2d_position_and_displacement(state, None)
+        self.sm._update_2d_position_and_displacement(state, None, sn)
         # Surface normal is [1,0,0] from eye(3), so tangent frame should exist
         self.assertIsNotNone(self.sm._tangent_frame)
 
@@ -416,7 +418,8 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
         self.sm._tangent_frame = self._make_mock_tangent_frame()
 
         state = make_state(location=loc.copy())
-        result = self.sm._update_2d_position_and_displacement(state, None)
+        sn = state.get_surface_normal()
+        result = self.sm._update_2d_position_and_displacement(state, None, sn)
         nptest.assert_array_equal(
             result.displacement["displacement"], np.zeros(3)
         )
@@ -436,8 +439,9 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
                 "pose_fully_defined": False,
             },
         )
+        sn = state.get_surface_normal()
         result = self.sm._update_2d_position_and_displacement(
-            state, curvature_pose_vectors=None
+            state, curvature_pose_vectors=None, surface_normal=sn
         )
         # d_tan projects [0.3, 0.4, 0] onto plane perp to [0,0,1] = [0.3, 0.4, 0]
         # du = dot([0.3,0.4,0], [1,0,0]) = 0.3
@@ -464,8 +468,9 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
                 "principal_curvatures": np.array([0.1, 0.2]),
             },
         )
+        sn = state.get_surface_normal()
         result = self.sm._update_2d_position_and_displacement(
-            state, curvature_pose_vectors=curvature_pv
+            state, curvature_pose_vectors=curvature_pv, surface_normal=sn
         )
         mock_arc.assert_called_once()
         nptest.assert_allclose(
@@ -486,7 +491,8 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
                 "pose_fully_defined": False,
             },
         )
-        self.sm._update_2d_position_and_displacement(state1, None)
+        sn1 = state1.get_surface_normal()
+        self.sm._update_2d_position_and_displacement(state1, None, sn1)
 
         state2 = make_state(
             location=np.array([1.0, 2.0, 0.0]),
@@ -495,7 +501,8 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
                 "pose_fully_defined": False,
             },
         )
-        result = self.sm._update_2d_position_and_displacement(state2, None)
+        sn2 = state2.get_surface_normal()
+        result = self.sm._update_2d_position_and_displacement(state2, None, sn2)
         nptest.assert_allclose(
             self.sm._previous_2d_location, [1.0, 2.0], atol=1e-10
         )
@@ -514,7 +521,8 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
                 "pose_fully_defined": False,
             },
         )
-        result = self.sm._update_2d_position_and_displacement(state, None)
+        sn = state.get_surface_normal()
+        result = self.sm._update_2d_position_and_displacement(state, None, sn)
         self.assertEqual(result.location[2], 0.0)
 
 

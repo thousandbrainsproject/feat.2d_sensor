@@ -186,6 +186,10 @@ class TwoDSensorModule(SensorModule):
         if curvature_pose_vectors is not None:
             curvature_pose_vectors = curvature_pose_vectors.copy()
 
+        true_surface_normal = observed_state.get_surface_normal()
+        if true_surface_normal is not None:
+            true_surface_normal = true_surface_normal.copy()
+
         # Only edges define pose for 2D sensor; reset curvature-based flag.
         if "pose_fully_defined" in observed_state.morphological_features:
             observed_state.morphological_features["pose_fully_defined"] = False
@@ -207,7 +211,7 @@ class TwoDSensorModule(SensorModule):
             observed_state.use_state = False
 
         observed_state = self._update_2d_position_and_displacement(
-            observed_state, curvature_pose_vectors
+            observed_state, curvature_pose_vectors, true_surface_normal
         )
 
         observed_state = self._state_filter(observed_state)
@@ -293,6 +297,7 @@ class TwoDSensorModule(SensorModule):
         self,
         observed_state: State,
         curvature_pose_vectors: np.ndarray | None,
+        surface_normal: np.ndarray | None,
     ) -> State:
         """Project the 3D step onto the tangent plane to get a 2D displacement.
 
@@ -300,6 +305,8 @@ class TwoDSensorModule(SensorModule):
             observed_state: State to update with 2D displacement and position.
             curvature_pose_vectors: Curvature-based pose vectors used for
                 arc-length correction. If None, chord length is used as-is.
+            surface_normal: True surface normal from curvature estimation,
+                saved before edge detection may overwrite pose_vectors.
 
         Returns:
             The updated state with 2D position and displacement.
@@ -309,7 +316,6 @@ class TwoDSensorModule(SensorModule):
             return observed_state
 
         current_3d_location = observed_state.location.copy()
-        surface_normal = observed_state.get_surface_normal()
 
         if self._previous_3d_location is None or surface_normal is None:
             if surface_normal is not None:
