@@ -96,46 +96,6 @@ def gradient_to_tangent_angle(gradient_angle: float) -> float:
     return (tangent_angle + 2 * np.pi) % (2 * np.pi)
 
 
-def edge_angle_to_3d_tangent(
-    theta: float,
-    surface_normal: np.ndarray,
-    world_camera: np.ndarray,
-) -> np.ndarray:
-    """Project a 2D edge angle from an image to a 3D tangent vector on a surface.
-
-    Builds an orthonormal tangent basis (tx, ty) on the surface, aligned with
-    the camera's image axes, then combines them using theta.
-
-    Args:
-        theta: Edge angle in radians, measured counterclockwise image x axis.
-            In an image, +x is right and +y is down.
-        surface_normal: Surface normal vector in world frame.
-        world_camera: 4x4 world-to-camera transformation matrix.
-
-    Returns:
-        3D unit tangent vector in world frame.
-    """
-    surface_normal = normalize(surface_normal)
-
-    R = world_camera[:3, :3]  # noqa: N806
-
-    # Camera x-axis ("image right") expressed in world coordinates
-    image_x_world = R.T @ np.array([1.0, 0.0, 0.0])
-
-    tx = project_onto_tangent_plane(image_x_world, surface_normal)
-    if np.linalg.norm(tx) < 1e-12:
-        fallback = R.T @ np.array([0.0, 0.0, 1.0])
-        if abs(np.dot(fallback, surface_normal)) > 0.99:
-            fallback = R.T @ np.array([0.0, 1.0, 0.0])
-        tx = project_onto_tangent_plane(fallback, surface_normal)
-    tx = normalize(tx)
-
-    ty = normalize(np.cross(surface_normal, tx))
-
-    t_world = np.cos(theta) * tx + np.sin(theta) * ty
-    return normalize(t_world)
-
-
 def edge_angle_to_2d_pose(
     theta: float,
     world_camera: np.ndarray,

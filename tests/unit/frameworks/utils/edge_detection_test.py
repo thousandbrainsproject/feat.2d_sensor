@@ -15,7 +15,6 @@ from tbp.monty.frameworks.utils.edge_detection import (
     EdgeDetectionConfig,
     compute_weighted_structure_tensor_edge_features,
     edge_angle_to_2d_pose,
-    edge_angle_to_3d_tangent,
     gradient_to_tangent_angle,
     is_geometric_edge,
 )
@@ -97,85 +96,6 @@ class IsGeometricEdgeTest(unittest.TestCase):
         self.assertTrue(
             is_geometric_edge(patch, edge_theta=np.pi / 2, depth_threshold=1e-6)
         )
-
-
-class EdgeAngleTo3dTangentTest(unittest.TestCase):
-    """Unit tests for the edge_angle_to_3d_tangent function."""
-
-    def test_identity_camera_z_normal_theta_zero(self):
-        result = edge_angle_to_3d_tangent(
-            theta=0.0,
-            surface_normal=np.array([0.0, 0.0, 1.0]),
-            world_camera=np.eye(4),
-        )
-        np.testing.assert_array_almost_equal(result, [1.0, 0.0, 0.0])
-
-    def test_identity_camera_z_normal_theta_pi_half(self):
-        result = edge_angle_to_3d_tangent(
-            theta=np.pi / 2,
-            surface_normal=np.array([0.0, 0.0, 1.0]),
-            world_camera=np.eye(4),
-        )
-        # ty = cross(n, tx) = cross([0,0,1], [1,0,0]) = [0,1,0]
-        np.testing.assert_array_almost_equal(result, [0.0, 1.0, 0.0])
-
-    def test_result_is_unit_vector(self):
-        for theta in [0, np.pi / 4, np.pi / 2, np.pi, 3 * np.pi / 2]:
-            for normal in [
-                np.array([0.0, 0.0, 1.0]),
-                np.array([1.0, 0.0, 0.0]),
-                np.array([1.0, 1.0, 1.0]),
-            ]:
-                result = edge_angle_to_3d_tangent(theta, normal, np.eye(4))
-                self.assertAlmostEqual(np.linalg.norm(result), 1.0, places=6)
-
-    def test_result_orthogonal_to_normal(self):
-        for theta in [0, np.pi / 6, np.pi / 3, np.pi]:
-            for normal in [
-                np.array([0.0, 0.0, 1.0]),
-                np.array([0.0, 1.0, 0.0]),
-                np.array([1.0, 1.0, 1.0]),
-            ]:
-                n_unit = normal / np.linalg.norm(normal)
-                result = edge_angle_to_3d_tangent(theta, normal, np.eye(4))
-                self.assertAlmostEqual(np.dot(result, n_unit), 0.0, places=5)
-
-    def test_4x4_matrix_with_translation(self):
-        cam_with_translation = np.eye(4)
-        cam_with_translation[:3, 3] = [1.0, 2.0, 3.0]
-        result = edge_angle_to_3d_tangent(
-            theta=0.0,
-            surface_normal=np.array([0.0, 0.0, 1.0]),
-            world_camera=cam_with_translation,
-        )
-        result_identity = edge_angle_to_3d_tangent(
-            theta=0.0,
-            surface_normal=np.array([0.0, 0.0, 1.0]),
-            world_camera=np.eye(4),
-        )
-        # Translation should not affect the tangent direction
-        np.testing.assert_array_almost_equal(result, result_identity)
-
-    def test_zero_normal_raises(self):
-        with self.assertRaises(ValueError):
-            edge_angle_to_3d_tangent(
-                theta=0.0,
-                surface_normal=np.array([0.0, 0.0, 0.0]),
-                world_camera=np.eye(4),
-            )
-
-    def test_oblique_normal(self):
-        normal = np.array([1.0, 1.0, 1.0])
-        result = edge_angle_to_3d_tangent(0.0, normal, np.eye(4))
-        n_unit = normal / np.linalg.norm(normal)
-        self.assertAlmostEqual(np.linalg.norm(result), 1.0, places=6)
-        self.assertAlmostEqual(np.dot(result, n_unit), 0.0, places=5)
-
-    def test_normal_along_x_axis(self):
-        normal = np.array([1.0, 0.0, 0.0])
-        result = edge_angle_to_3d_tangent(0.0, normal, np.eye(4))
-        self.assertAlmostEqual(np.linalg.norm(result), 1.0, places=6)
-        self.assertAlmostEqual(result[0], 0.0, places=5)
 
 
 class EdgeAngleTo2dPoseTest(unittest.TestCase):
