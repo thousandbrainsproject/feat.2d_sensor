@@ -187,6 +187,10 @@ class TwoDSensorModule(SensorModule):
         if curvature_pose_vectors is not None:
             curvature_pose_vectors = curvature_pose_vectors.copy()
 
+        # Only edges define pose for 2D sensor; reset curvature-based flag.
+        if "pose_fully_defined" in observed_state.morphological_features:
+            observed_state.morphological_features["pose_fully_defined"] = False
+
         if observed_state.use_state and observed_state.get_on_object():
             observed_state = self._extract_2d_edge(
                 observed_state,
