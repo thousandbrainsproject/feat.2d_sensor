@@ -1,3 +1,7 @@
+# configs for sanity check experiments during prototyping
+src/tbp/monty/conf
+!src/tbp/monty/conf/hydra
+
 # wandb local configs
 wandb/
 

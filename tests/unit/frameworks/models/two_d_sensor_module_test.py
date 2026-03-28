@@ -255,14 +255,6 @@ class TestExtract2dEdge(unittest.TestCase):
         result = self.sm._extract_2d_edge(state, self.rgba, self.world_camera)
         self.assertIs(result, state)
 
-    def test_zero_normal_returns_unchanged(self):
-        state = self._base_state(
-            pose_vectors=np.array([[0, 0, 0], [0, 1, 0], [1, 0, 0]],
-                                  dtype=float)
-        )
-        result = self.sm._extract_2d_edge(state, self.rgba, self.world_camera)
-        self.assertIs(result, state)
-
     @patch(f"{MODULE_PATH}.is_geometric_edge", return_value=True)
     @patch(f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
            return_value=(0.5, 0.8, 1.0))
@@ -289,8 +281,9 @@ class TestExtract2dEdge(unittest.TestCase):
         self.assertFalse(state.morphological_features["pose_fully_defined"])
         self.assertIs(result, state)
 
-    @patch(f"{MODULE_PATH}.edge_angle_to_3d_tangent",
-           return_value=np.array([0.0, 1.0, 0.0]))
+    @patch(f"{MODULE_PATH}.edge_angle_to_2d_pose",
+           return_value=np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]],
+                                 dtype=float))
     @patch(f"{MODULE_PATH}.is_geometric_edge", return_value=False)
     @patch(f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
            return_value=(0.5, 0.8, 0.7))
@@ -301,12 +294,12 @@ class TestExtract2dEdge(unittest.TestCase):
         )
         self.assertTrue(result.morphological_features["pose_fully_defined"])
         pose = result.morphological_features["pose_vectors"]
-        # Row 0: surface normal [1,0,0] (eye(3) row 0, normalized)
-        nptest.assert_allclose(pose[0], [1, 0, 0], atol=1e-7)
-        # Row 1: edge tangent (normalized [0,1,0])
+        # Row 0: normal always [0,0,1] in 2D plane
+        nptest.assert_allclose(pose[0], [0, 0, 1], atol=1e-7)
+        # Row 1: edge tangent in xy-plane
         nptest.assert_allclose(pose[1], [0, 1, 0], atol=1e-7)
-        # Row 2: cross(normal, tangent) = cross([1,0,0],[0,1,0]) = [0,0,1]
-        nptest.assert_allclose(pose[2], [0, 0, 1], atol=1e-7)
+        # Row 2: edge perp in xy-plane
+        nptest.assert_allclose(pose[2], [-1, 0, 0], atol=1e-7)
         self.assertAlmostEqual(
             result.non_morphological_features["edge_strength"], 0.5
         )
@@ -314,8 +307,8 @@ class TestExtract2dEdge(unittest.TestCase):
             result.non_morphological_features["coherence"], 0.8
         )
 
-    @patch(f"{MODULE_PATH}.edge_angle_to_3d_tangent",
-           return_value=np.array([0.0, 1.0, 0.0]))
+    @patch(f"{MODULE_PATH}.edge_angle_to_2d_pose",
+           return_value=np.eye(3))
     @patch(f"{MODULE_PATH}.is_geometric_edge", return_value=False)
     @patch(f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
            return_value=(0.5, 0.8, 0.7))
@@ -329,8 +322,8 @@ class TestExtract2dEdge(unittest.TestCase):
         self.assertEqual(patch_arg.shape[2], 3)
 
     @patch(f"{MODULE_PATH}.is_geometric_edge")
-    @patch(f"{MODULE_PATH}.edge_angle_to_3d_tangent",
-           return_value=np.array([0.0, 1.0, 0.0]))
+    @patch(f"{MODULE_PATH}.edge_angle_to_2d_pose",
+           return_value=np.eye(3))
     @patch(f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
            return_value=(0.5, 0.8, 0.7))
     def test_no_depth_skips_geometric_check(self, _mc, _mt, mock_geo):
@@ -339,18 +332,26 @@ class TestExtract2dEdge(unittest.TestCase):
                                  depth_image=None)
         mock_geo.assert_not_called()
 
-    @patch(f"{MODULE_PATH}.edge_angle_to_3d_tangent",
-           return_value=np.array([0.0, 0.0, 0.0]))
     @patch(f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
-           return_value=(0.5, 0.8, 0.7))
-    def test_zero_edge_tangent_returns_unchanged(self, _mc, _mt):
+           return_value=(0.5, 0.8, np.pi / 4))
+    def test_edge_pose_uses_2d_rotation(self, _mc):
+        """Verify edge_angle_to_2d_pose is called with orientation and camera."""
         state = self._base_state()
-        result = self.sm._extract_2d_edge(state, self.rgba, self.world_camera)
-        self.assertFalse(state.morphological_features["pose_fully_defined"])
-        self.assertIs(result, state)
+        with patch(f"{MODULE_PATH}.edge_angle_to_2d_pose") as mock_pose:
+            s2 = np.sqrt(2) / 2
+            mock_pose.return_value = np.array(
+                [[0, 0, 1], [s2, s2, 0], [-s2, s2, 0]]
+            )
+            result = self.sm._extract_2d_edge(
+                state, self.rgba, self.world_camera
+            )
+            mock_pose.assert_called_once_with(np.pi / 4, self.world_camera)
+        self.assertTrue(result.morphological_features["pose_fully_defined"])
+        nptest.assert_allclose(result.morphological_features["pose_vectors"][0],
+                               [0, 0, 1], atol=1e-7)
 
-    @patch(f"{MODULE_PATH}.edge_angle_to_3d_tangent",
-           return_value=np.array([0.0, 1.0, 0.0]))
+    @patch(f"{MODULE_PATH}.edge_angle_to_2d_pose",
+           return_value=np.eye(3))
     @patch(f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
            return_value=(0.5, 0.8, 0.7))
     def test_omits_features_not_in_list(self, _mc, _mt):
