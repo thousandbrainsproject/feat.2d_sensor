@@ -14,6 +14,7 @@ import numpy as np
 from tbp.monty.frameworks.utils.edge_detection import (
     EdgeDetectionConfig,
     compute_weighted_structure_tensor_edge_features,
+    edge_angle_to_2d_pose,
     edge_angle_to_3d_tangent,
     gradient_to_tangent_angle,
     is_geometric_edge,
@@ -175,6 +176,73 @@ class EdgeAngleTo3dTangentTest(unittest.TestCase):
         result = edge_angle_to_3d_tangent(0.0, normal, np.eye(4))
         self.assertAlmostEqual(np.linalg.norm(result), 1.0, places=6)
         self.assertAlmostEqual(result[0], 0.0, places=5)
+
+
+class EdgeAngleTo2dPoseTest(unittest.TestCase):
+    """Unit tests for the edge_angle_to_2d_pose function."""
+
+    def test_identity_camera_theta_zero(self):
+        pose = edge_angle_to_2d_pose(theta=0.0, world_camera=np.eye(4))
+        np.testing.assert_array_almost_equal(pose[0], [0, 0, 1])
+        np.testing.assert_array_almost_equal(pose[1], [1, 0, 0])
+        np.testing.assert_array_almost_equal(pose[2], [0, 1, 0])
+
+    def test_identity_camera_theta_pi_half(self):
+        pose = edge_angle_to_2d_pose(theta=np.pi / 2, world_camera=np.eye(4))
+        np.testing.assert_array_almost_equal(pose[0], [0, 0, 1])
+        np.testing.assert_array_almost_equal(pose[1], [0, 1, 0])
+        np.testing.assert_array_almost_equal(pose[2], [-1, 0, 0])
+
+    def test_identity_camera_theta_pi_quarter(self):
+        pose = edge_angle_to_2d_pose(theta=np.pi / 4, world_camera=np.eye(4))
+        s2 = np.sqrt(2) / 2
+        np.testing.assert_array_almost_equal(pose[0], [0, 0, 1])
+        np.testing.assert_array_almost_equal(pose[1], [s2, s2, 0])
+        np.testing.assert_array_almost_equal(pose[2], [-s2, s2, 0])
+
+    def test_normal_always_001(self):
+        for theta in [0, np.pi / 6, np.pi / 3, np.pi, 5.0]:
+            pose = edge_angle_to_2d_pose(theta, np.eye(4))
+            np.testing.assert_array_almost_equal(pose[0], [0, 0, 1])
+
+    def test_z_component_always_zero_for_tangents(self):
+        for theta in [0, np.pi / 4, np.pi / 2, np.pi]:
+            pose = edge_angle_to_2d_pose(theta, np.eye(4))
+            self.assertAlmostEqual(pose[1][2], 0.0)
+            self.assertAlmostEqual(pose[2][2], 0.0)
+
+    def test_orthonormality(self):
+        for theta in np.linspace(0, 2 * np.pi, 8, endpoint=False):
+            pose = edge_angle_to_2d_pose(theta, np.eye(4))
+            for i in range(3):
+                self.assertAlmostEqual(np.linalg.norm(pose[i]), 1.0, places=6)
+            for i in range(3):
+                for j in range(i + 1, 3):
+                    self.assertAlmostEqual(
+                        np.dot(pose[i], pose[j]), 0.0, places=6
+                    )
+
+    def test_tilted_camera_90_yaw(self):
+        # 90-degree CCW rotation around z: world_camera maps world -> camera.
+        # R = Rz(pi/2), so R.T @ [1,0,0] = first row of R = [0,1,0].
+        R = np.array([
+            [0, 1, 0],
+            [-1, 0, 0],
+            [0, 0, 1],
+        ], dtype=float)
+        cam = np.eye(4)
+        cam[:3, :3] = R
+        pose = edge_angle_to_2d_pose(theta=0.0, world_camera=cam)
+        # ref_angle = atan2(1,0) = pi/2, world_theta = pi/2
+        np.testing.assert_array_almost_equal(pose[1], [0, 1, 0])
+        np.testing.assert_array_almost_equal(pose[2], [-1, 0, 0])
+
+    def test_translation_does_not_affect_result(self):
+        cam = np.eye(4)
+        cam[:3, 3] = [10.0, 20.0, 30.0]
+        pose_translated = edge_angle_to_2d_pose(np.pi / 3, cam)
+        pose_identity = edge_angle_to_2d_pose(np.pi / 3, np.eye(4))
+        np.testing.assert_array_almost_equal(pose_translated, pose_identity)
 
 
 class ComputeWeightedStructureTensorEdgeFeaturesTest(unittest.TestCase):

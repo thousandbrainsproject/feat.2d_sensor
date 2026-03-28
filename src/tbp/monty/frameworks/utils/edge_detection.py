@@ -136,6 +136,37 @@ def edge_angle_to_3d_tangent(
     return normalize(t_world)
 
 
+def edge_angle_to_2d_pose(
+    theta: float,
+    world_camera: np.ndarray,
+) -> np.ndarray:
+    """Build 2D pose vectors from an edge angle.
+
+    Returns the standard basis rotated by the edge angle in the world
+    xy-plane. When the camera is tilted, the camera's image x-axis is
+    projected into the xy-plane to determine the reference direction.
+
+    Args:
+        theta: Edge angle in radians (counterclockwise from image x-axis).
+        world_camera: 4x4 world-to-camera transformation matrix.
+
+    Returns:
+        3x3 array whose rows are [normal, edge_tangent, edge_perp].
+        Normal is always [0, 0, 1]; tangent and perp lie in the z=0 plane.
+    """
+    R = world_camera[:3, :3]  # noqa: N806
+    image_x_world = R.T @ np.array([1.0, 0.0, 0.0])
+    ref_angle = np.arctan2(image_x_world[1], image_x_world[0])
+    world_theta = ref_angle + theta
+
+    cos_t, sin_t = np.cos(world_theta), np.sin(world_theta)
+    return np.array([
+        [0.0, 0.0, 1.0],
+        [cos_t, sin_t, 0.0],
+        [-sin_t, cos_t, 0.0],
+    ])
+
+
 def compute_weighted_structure_tensor_edge_features(
     patch: np.ndarray,
     edge_detection_config: Optional[EdgeDetectionConfig] = None,

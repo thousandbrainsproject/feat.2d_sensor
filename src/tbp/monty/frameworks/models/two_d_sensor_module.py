@@ -36,7 +36,7 @@ from tbp.monty.frameworks.sensors import SensorID
 from tbp.monty.frameworks.utils.edge_detection import (
     EdgeDetectionConfig,
     compute_weighted_structure_tensor_edge_features,
-    edge_angle_to_3d_tangent,
+    edge_angle_to_2d_pose,
     is_geometric_edge,
 )
 from tbp.monty.frameworks.utils.sensor_processing import (
@@ -44,7 +44,6 @@ from tbp.monty.frameworks.utils.sensor_processing import (
 )
 from tbp.monty.frameworks.utils.spatial_arithmetics import (
     TangentFrame,
-    normalize,
     project_onto_tangent_plane,
 )
 
@@ -246,11 +245,6 @@ class TwoDSensorModule(SensorModule):
         if "pose_vectors" not in state.morphological_features:
             return state
 
-        try:
-            surface_normal = normalize(state.morphological_features["pose_vectors"][0])
-        except ValueError:
-            return state
-
         if rgba_image.shape[2] == 4:
             patch = rgba_image[:, :, :3]
         else:
@@ -283,21 +277,8 @@ class TwoDSensorModule(SensorModule):
         if not has_edge:
             return state
 
-        edge_tangent = edge_angle_to_3d_tangent(
-            edge_orientation, surface_normal, world_camera
-        )
-        try:
-            edge_tangent = normalize(edge_tangent)
-            edge_perp = normalize(np.cross(surface_normal, edge_tangent))
-        except ValueError:
-            return state
-
-        state.morphological_features["pose_vectors"] = np.vstack(
-            [
-                surface_normal,
-                edge_tangent,
-                edge_perp,
-            ]
+        state.morphological_features["pose_vectors"] = edge_angle_to_2d_pose(
+            edge_orientation, world_camera
         )
         state.morphological_features["pose_fully_defined"] = True
 
