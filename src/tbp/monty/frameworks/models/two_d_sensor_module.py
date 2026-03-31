@@ -202,6 +202,17 @@ class TwoDSensorModule(SensorModule):
                 depth_image=data.get("depth"),
             )
 
+        # Replace 3D curvature pose with flat 2D basis when no edge was detected.
+        if (
+            "pose_vectors" in observed_state.morphological_features
+            and not observed_state.morphological_features.get(
+                "pose_fully_defined", False
+            )
+        ):
+            observed_state.morphological_features["pose_vectors"] = np.array(
+                [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+            )
+
         if observed_state.use_state:
             observed_state = self._message_noise(observed_state, rng=ctx.rng)
 
