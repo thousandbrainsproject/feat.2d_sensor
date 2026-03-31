@@ -76,6 +76,12 @@ def compute_arc_from_tangent_projection(
         return projection_length
 
     if kp >= 1.0:
+        # |k * p| >= 1.0 means the chord length p is greater than the radius of
+        # curvature, i.e. we move beyond the most extreme visible point of the surface,
+        # assuming uniform curvature. Either we are on a different surface, or the
+        # curvature is not uniform (the surface curves back), and the system will
+        # underestimate 2D distance traveled. The higher-level solution is a policy
+        # that takes smaller steps in 3D space to better estimate movements in 2D space.
         logger.debug(
             "Arc correction skipped: |k*p| = %.4f >= 1.0 "
             "(projection_length=%.6f, curvature=%.6f)",
