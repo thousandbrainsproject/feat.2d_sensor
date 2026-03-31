@@ -138,18 +138,19 @@ class EdgeAngleTo2dPoseTest(unittest.TestCase):
                 self.assertAlmostEqual(np.linalg.norm(pose[i]), 1.0, places=6)
             for i in range(3):
                 for j in range(i + 1, 3):
-                    self.assertAlmostEqual(
-                        np.dot(pose[i], pose[j]), 0.0, places=6
-                    )
+                    self.assertAlmostEqual(np.dot(pose[i], pose[j]), 0.0, places=6)
 
     def test_tilted_camera_90_yaw(self):
         # 90-degree CCW rotation around z: world_camera maps world -> camera.
         # R = Rz(pi/2), so R.T @ [1,0,0] = first row of R = [0,1,0].
-        R = np.array([
-            [0, 1, 0],
-            [-1, 0, 0],
-            [0, 0, 1],
-        ], dtype=float)
+        R = np.array(
+            [
+                [0, 1, 0],
+                [-1, 0, 0],
+                [0, 0, 1],
+            ],
+            dtype=float,
+        )
         cam = np.eye(4)
         cam[:3, :3] = R
         pose = edge_angle_to_2d_pose(theta=0.0, world_camera=cam)

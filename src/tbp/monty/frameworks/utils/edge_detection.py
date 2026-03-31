@@ -121,11 +121,13 @@ def edge_angle_to_2d_pose(
     world_theta = ref_angle - theta
 
     cos_t, sin_t = np.cos(world_theta), np.sin(world_theta)
-    return np.array([
-        [0.0, 0.0, 1.0],
-        [cos_t, sin_t, 0.0],
-        [-sin_t, cos_t, 0.0],
-    ])
+    return np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [cos_t, sin_t, 0.0],
+            [-sin_t, cos_t, 0.0],
+        ]
+    )
 
 
 def compute_weighted_structure_tensor_edge_features(
