@@ -278,10 +278,7 @@ class GaussianSmoothing(Transform):
 
 
 class GaussianBlurRGB(Transform):
-    """Apply Gaussian blur to RGB image before edge detection.
-
-    This transform is useful to reduce noise and extract the dominant edge of the patch.
-    """
+    """Apply Gaussian blur to RGB image."""
 
     def __init__(
         self,
@@ -302,6 +299,7 @@ class GaussianBlurRGB(Transform):
                 to all sensors of the agent.
 
         Raises:
+            ValueError: If sensor_ids is an empty list.
             ValueError: If kernel_size is even (when not 0).
         """
         self.agent_id = agent_id
@@ -309,23 +307,25 @@ class GaussianBlurRGB(Transform):
         self.kernel_size = kernel_size
         self.sensor_ids = sensor_ids
 
+        if sensor_ids is not None and len(sensor_ids) == 0:
+            raise ValueError("sensor_ids must not be empty; use None for all sensors")
         if self.kernel_size < 0:
-            raise ValueError(f"kernel_size must be non-negative, got {kernel_size}")
+            raise ValueError(
+                f"The kernel_size must be non-negative, got {kernel_size}."
+            )
         if self.kernel_size != 0 and self.kernel_size % 2 == 0:
             raise ValueError(
-                f"kernel_size must be odd or 0 (for auto-compute), got {kernel_size}"
+                f"The kernel_size must be odd or 0 (for auto-compute), "
+                f"got {kernel_size}."
             )
         if self.kernel_size == 0 and self.sigma <= 0:
             raise ValueError(
-                f"sigma must be positive when kernel_size is 0, got {sigma}"
+                f"The sigma must be positive when kernel_size is 0, got {sigma}."
             )
 
     def __call__(
         self, observations: Observations, _ctx: TransformContext
     ) -> Observations:
-        return self.call(observations)
-
-    def call(self, observations: Observations) -> Observations:
         """Apply Gaussian blur to RGB image.
 
         Args:
@@ -338,24 +338,22 @@ class GaussianBlurRGB(Transform):
             KeyError: If sensor is not found in observations or has no 'rgba' key.
         """
         agent_obs = observations[self.agent_id]
-        sensors_to_process = self.sensor_ids
-        if sensors_to_process is None:
-            sensors_to_process = list(agent_obs.keys())
+        sensors_to_process = (
+            self.sensor_ids if self.sensor_ids else list(agent_obs.keys())
+        )
 
-        for sm in sensors_to_process:
-            if sm not in agent_obs:
-                if self.sensor_ids is not None:
-                    raise KeyError(
-                        f"Sensor '{sm}' not found in observations for agent "
-                        f"'{self.agent_id}'"
-                    )
-                continue
-            if "rgba" not in agent_obs[sm]:
-                if self.sensor_ids is not None:
-                    raise KeyError(f"Sensor '{sm}' has no 'rgba' key in observations")
-                continue
+        for sensor_id in sensors_to_process:
+            if sensor_id not in agent_obs:
+                raise KeyError(
+                    f"Sensor '{sensor_id}' not found in observations for agent "
+                    f"'{self.agent_id}'"
+                )
+            if "rgba" not in agent_obs[sensor_id]:
+                raise KeyError(
+                    f"Sensor '{sensor_id}' has no 'rgba' key in observations"
+                )
 
-            rgba = agent_obs[sm]["rgba"]
+            rgba = agent_obs[sensor_id]["rgba"]
             rgb_image = rgba[:, :, :3]
             alpha_channel = rgba[:, :, 3:4]
 
@@ -363,7 +361,9 @@ class GaussianBlurRGB(Transform):
                 rgb_image, (self.kernel_size, self.kernel_size), self.sigma
             )
 
-            agent_obs[sm]["rgba"] = np.concatenate([blurred_rgb, alpha_channel], axis=2)
+            agent_obs[sensor_id]["rgba"] = np.concatenate(
+                [blurred_rgb, alpha_channel], axis=2
+            )
 
         return observations
 

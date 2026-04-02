@@ -23,6 +23,7 @@ from tbp.monty.frameworks.models.motor_system_state import (
     MotorSystemState,
     ProprioceptiveState,
 )
+from tbp.monty.frameworks.models.states import GoalState, State
 
 __all__ = ["MotorSystem"]
 
@@ -63,6 +64,10 @@ class MotorSystem:
     def action_sequence(self) -> list[tuple[list[Action], dict[AgentID, Any] | None]]:
         return self._action_sequence
 
+    def set_driving_goal_state(self, goal: GoalState | None) -> None:
+        """Set the driving goal state."""
+        self._policy.set_driving_goal_state(goal)
+
     def pre_episode(self) -> None:
         """Pre episode hook."""
         # TODO: Passing self to policy pre_episode is a hack. What we should be
@@ -79,11 +84,15 @@ class MotorSystem:
             z_defined_pc=[],
         )
 
+    def state_dict(self) -> dict[str, Any]:
+        return self._policy.state_dict()
+
     def __call__(
         self,
         ctx: RuntimeContext,
         observations: Observations,
         proprioceptive_state: ProprioceptiveState,
+        percept: State,
     ) -> list[Action]:
         """Defines the structure for __call__.
 
@@ -93,12 +102,14 @@ class MotorSystem:
             ctx: The runtime context.
             observations: The observations from the environment.
             proprioceptive_state: The proprioceptive state from the environment.
+            percept: The percept from (as of this writing) the first sensor
+                module.
 
         Returns:
             The action to take.
         """
         motor_system_state = MotorSystemState(proprioceptive_state)
-        policy_result = self._policy(ctx, observations, motor_system_state)
+        policy_result = self._policy(ctx, observations, motor_system_state, percept)
         self.motor_only_step = policy_result.motor_only_step
 
         state_copy = motor_system_state.convert_motor_state()
