@@ -53,9 +53,6 @@ def project_onto_tangent_plane(v: np.ndarray, n: np.ndarray) -> np.ndarray:
 
     Returns:
         The projection of v onto the plane perpendicular to n.
-
-    Raises:
-        ValueError: If n is a near-zero vector.
     """
     n = normalize(n)
     return v - np.dot(v, n) * n
@@ -93,7 +90,7 @@ class TangentFrame:
             world_up = np.array([0, 0, 1])
 
         self._u = np.cross(world_up, surface_normal)
-        self._u /= np.linalg.norm(self._u)
+        self._u = normalize(self._u)
 
         self._v = np.cross(surface_normal, self._u)
 
@@ -135,7 +132,7 @@ class TangentFrame:
 
         # Construct the rotation matrix to apply to the basis vectors
         rotation_axis = np.cross(old_normal, new_normal)
-        rotation_axis = rotation_axis / np.linalg.norm(rotation_axis)
+        rotation_axis = normalize(rotation_axis)
         rotation_angle = np.arccos(cos_angle)
         rotation = Rotation.from_rotvec(rotation_axis * rotation_angle)
 
