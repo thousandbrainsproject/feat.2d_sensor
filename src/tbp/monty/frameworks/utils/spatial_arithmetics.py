@@ -15,135 +15,30 @@ import sys
 
 import numpy as np
 import torch
+from numpy.typing import ArrayLike
 from scipy.spatial.transform import Rotation
 
 logger = logging.getLogger(__name__)
 
 
-def normalize(v: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+def normalize(v: ArrayLike, epsilon: float = 1e-12) -> np.ndarray:
     """Normalize a vector to unit length.
 
     Args:
         v: Input vector to normalize.
-        eps: Small epsilon value below which the vector is considered zero.
+        epsilon: Small epsilon value below which the vector is considered zero.
 
     Returns:
         Unit vector in the direction of v.
 
     Raises:
-        ValueError: If the vector has near-zero length (norm < eps).
+        ValueError: If the vector has near-zero length (norm < epsilon).
     """
-    n = float(np.linalg.norm(v))
-    if n < eps:
+    v = np.asarray(v)
+    n = np.linalg.norm(v)
+    if n < epsilon:
         raise ValueError(f"Cannot normalize near-zero vector (norm={n:.2e})")
     return v / n
-
-
-def project_onto_tangent_plane(v: np.ndarray, n: np.ndarray) -> np.ndarray:
-    """Project a vector onto the tangent plane perpendicular to a normal.
-
-    Removes the component of v that is parallel to n, leaving only the
-    component that lies in the plane perpendicular to n.
-
-    Args:
-        v: Vector to project.
-        n: Normal vector defining the tangent plane. Normalized internally.
-
-    Returns:
-        The projection of v onto the plane perpendicular to n.
-
-    Raises:
-        ValueError: If n is a near-zero vector.
-    """
-    n = normalize(n)
-    return v - np.dot(v, n) * n
-
-
-class TangentFrame:
-    """Orthonormal tangent frame on a surface.
-
-    Maintains a right-handed (u, v, n) basis where n is the surface normal,
-    u is the horizontal tangent direction, and v is the vertical tangent
-    direction. As the sensor moves across a curved surface, ``transport()``
-    rotates the tangent frame to match the new normal.
-
-    See:
-        https://en.wikipedia.org/wiki/Parallel_transport
-
-    Args:
-        surface_normal: Unit surface normal at the initial point.
-    """
-
-    def __init__(self, surface_normal: np.ndarray) -> None:
-        """Initialize an orthonormal (u, v) basis in the tangent plane of a surface.
-
-        A surface normal defines a tangent plane but not a unique basis. Here,
-        we arbitrarily choose v to be close to world_up, unless the surface normal
-        is nearly parallel to the world_up. Then, u is computed as the horizontal
-        tangent direction via cross products.
-
-        Args:
-            surface_normal: Unit surface normal at the initial point.
-        """
-        world_up = np.array([0, 1, 0])
-
-        if abs(np.dot(world_up, surface_normal)) > 0.95:
-            world_up = np.array([0, 0, 1])
-
-        self._u = np.cross(world_up, surface_normal)
-        self._u /= np.linalg.norm(self._u)
-
-        self._v = np.cross(surface_normal, self._u)
-
-        self._normal = surface_normal.copy()
-
-    @property
-    def basis_u(self) -> np.ndarray:
-        """Horizontal tangent basis vector."""
-        return self._u
-
-    @property
-    def basis_v(self) -> np.ndarray:
-        """Vertical tangent basis vector."""
-        return self._v
-
-    def transport(self, new_normal: np.ndarray) -> None:
-        """Parallel-transport the frame to a new surface normal.
-
-        As the sensor moves along a curved surface, the tangent plane
-        rotates with the curvature (e.g. around a cylinder). Parallel
-        transport transforms the basis (u, v) by exactly the rotation needed
-        to stay in the new tangent plane. This is analogous to "unrolling"
-        the curved surface.
-
-        Args:
-            new_normal: Unit surface normal at the new point.
-        """
-        old_normal = self._normal
-        # cos_angle = 1 means 0 deg (normals identical),
-        # cos_angle = -1 means 180 deg (normals opposite).
-        cos_angle = np.clip(np.dot(old_normal, new_normal), -1.0, 1.0)
-
-        normals_are_parallel = abs(cos_angle) > 1.0 - 1e-10
-        if normals_are_parallel:
-            if cos_angle < 0:
-                self._v = -self._v
-            self._normal = new_normal.copy()
-            return
-
-        # Construct the rotation matrix to apply to the basis vectors
-        rotation_axis = np.cross(old_normal, new_normal)
-        rotation_axis = rotation_axis / np.linalg.norm(rotation_axis)
-        rotation_angle = np.arccos(cos_angle)
-        rotation = Rotation.from_rotvec(rotation_axis * rotation_angle)
-
-        self._u = rotation.apply(self._u)
-
-        # Reset u and v to ensure the basis remains orthonormal.
-        self._u = normalize(self._u - np.dot(self._u, new_normal) * new_normal)
-        self._v = np.cross(new_normal, self._u)
-
-        self._normal = new_normal.copy()
 
 
 def rotations_to_quats(rotations, invert=False):
@@ -210,8 +105,6 @@ def get_angle(vec1, vec2):
     Returns:
         angle in radians
     """
-    # unit_vector_1 = vec1 / np.linalg.norm(vec1)
-    # unit_vector_2 = vec2 / np.linalg.norm(vec2)
     dot_product = np.dot(vec1, vec2)
     return np.arccos(np.clip(dot_product, -1, 1))
 
@@ -239,8 +132,8 @@ def get_angle_beefed_up(v1, v2):
     if np.all(v1 == 0) or np.all(v2 == 0):
         return np.inf
 
-    v1_u = v1 / np.linalg.norm(v1)
-    v2_u = v2 / np.linalg.norm(v2)
+    v1_u = normalize(v1)
+    v2_u = normalize(v2)
 
     result = np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
 
