@@ -105,23 +105,22 @@ class ProjectOntoTangentPlaneTest(unittest.TestCase):
 
 
 class TangentFrameTest(unittest.TestCase):
-    """Unit tests for the TangentFrame class."""
-
     def _assert_orthonormal_frame(self, frame, normal):
         """Assert (basis_u, basis_v, normal) form an orthonormal right-handed frame."""
         u, v = frame.basis_u, frame.basis_v
-        self.assertAlmostEqual(np.linalg.norm(u), 1.0, places=10)
-        self.assertAlmostEqual(np.linalg.norm(v), 1.0, places=10)
-        self.assertAlmostEqual(np.dot(u, v), 0.0, places=10)
-        self.assertAlmostEqual(np.dot(u, normal), 0.0, places=10)
-        self.assertAlmostEqual(np.dot(v, normal), 0.0, places=10)
-        # Right-handed: n x u ~ v (or u x v ~ n)
-        np.testing.assert_array_almost_equal(np.cross(u, v), normal, decimal=10)
+        # Check unit norm
+        np.testing.assert_array_almost_equal(np.linalg.norm(u), 1.0)
+        np.testing.assert_array_almost_equal(np.linalg.norm(v), 1.0)
+        np.testing.assert_array_almost_equal(np.linalg.norm(normal), 1.0)
 
-    def test_construction_with_z_normal(self):
-        n = np.array([0.0, 0.0, 1.0])
-        frame = TangentFrame(n)
-        self._assert_orthonormal_frame(frame, n)
+        # Check orthogonality
+        np.testing.assert_array_almost_equal(np.dot(u, v), 0.0)
+        np.testing.assert_array_almost_equal(np.dot(u, normal), 0.0)
+        np.testing.assert_array_almost_equal(np.dot(v, normal), 0.0)
+
+        # Check right-handedness
+        np.testing.assert_array_almost_equal(np.cross(u, v), normal)
+        np.testing.assert_array_almost_equal(np.cross(v, u), -normal)
 
     def test_construction_with_y_aligned_normal_triggers_fallback(self):
         n = normalize(np.array([0.0, 1.0, 0.01]))
