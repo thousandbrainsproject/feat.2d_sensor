@@ -10,160 +10,189 @@
 import unittest
 
 import numpy as np
+import numpy.testing as npt
+from hypothesis import assume, example, given
+from hypothesis import strategies as st
+from scipy.spatial.transform import Rotation
 
 from tbp.monty.frameworks.utils.edge_detection import (
-    EdgeDetectionConfig,
-    compute_weighted_structure_tensor_edge_features,
     edge_angle_to_2d_pose,
     gradient_to_tangent_angle,
     is_geometric_edge,
 )
+from tbp.monty.math import DEFAULT_TOLERANCE
+
+angles = st.floats(min_value=-2 * np.pi, max_value=2 * np.pi)
+
+
+@st.composite
+def rotation_3x3(draw):
+    """Draw a uniformly random SO(3) rotation matrix.
+
+    Returns:
+        rot: 3x3 rotation matrix.
+    """
+    seed = draw(st.integers(min_value=0, max_value=2**32 - 1))
+    rng = np.random.default_rng(seed)
+    rot = Rotation.random(random_state=rng).as_matrix()
+    return rot
+
+
+@st.composite
+def camera_4x4(draw):
+    """Draw a random 4x4 world-to-camera matrix with arbitrary translation.
+
+    Returns:
+        cam: 4x4 world-to-camera matrix with arbitrary translation.
+    """
+    R = draw(rotation_3x3())  # noqa: N806
+    tx, ty, tz = (draw(st.floats(min_value=-100.0, max_value=100.0)) for _ in range(3))
+    cam = np.eye(4)
+    cam[:3, :3] = R
+    cam[:3, 3] = [tx, ty, tz]
+    return cam
+
+
+PATCH_SIZE = 64
+
+positive_thresholds = st.floats(min_value=1e-8, max_value=10.0)
+
+STEP_EDGE_IMAGE = np.zeros((PATCH_SIZE, PATCH_SIZE), dtype=np.float32)
+STEP_EDGE_IMAGE[:, : PATCH_SIZE // 2] = 1.0
+
+
+@st.composite
+def flat_depth_image(draw):
+    """Generate a constant-depth patch with a random depth value.
+
+    Returns:
+        Float32 array of shape (PATCH_SIZE, PATCH_SIZE) filled with a constant depth.
+    """
+    depth = draw(st.floats(min_value=0.01, max_value=100.0))
+    return np.full((PATCH_SIZE, PATCH_SIZE), depth, dtype=np.float32)
 
 
 class GradientToTangentAngleTest(unittest.TestCase):
-    """Unit tests for the gradient_to_tangent_angle function."""
+    """Property-based tests for gradient_to_tangent_angle."""
 
-    def test_zero_gradient(self):
-        result = gradient_to_tangent_angle(0.0)
-        self.assertAlmostEqual(result, np.pi / 2)
+    @given(gradient_angle=angles)
+    def test_result_in_range(self, gradient_angle):
+        result = gradient_to_tangent_angle(gradient_angle)
+        assert 0.0 <= result < 2 * np.pi
 
-    def test_positive_gradient(self):
-        result = gradient_to_tangent_angle(np.pi / 4)
-        self.assertAlmostEqual(result, 3 * np.pi / 4)
-
-    def test_negative_gradient(self):
-        result = gradient_to_tangent_angle(-np.pi / 2)
-        self.assertAlmostEqual(result, 0.0)
-
-    def test_large_negative_wraps(self):
-        result = gradient_to_tangent_angle(-3 * np.pi)
-        self.assertGreaterEqual(result, 0.0)
-        self.assertLess(result, 2 * np.pi)
-
-    def test_result_always_in_range(self):
-        for angle in np.linspace(-4 * np.pi, 4 * np.pi, 50):
-            result = gradient_to_tangent_angle(angle)
-            self.assertGreaterEqual(result, 0.0)
-            self.assertLess(result, 2 * np.pi)
-
-    def test_perpendicularity(self):
-        gradient_angle = 0.0
-        tangent = gradient_to_tangent_angle(gradient_angle)
-        diff = abs(tangent - gradient_angle)
-        self.assertAlmostEqual(diff % np.pi, np.pi / 2)
+    @given(gradient_angle=angles)
+    def test_perpendicularity(self, gradient_angle):
+        result = gradient_to_tangent_angle(gradient_angle)
+        remainder = (result - gradient_angle) % np.pi
+        npt.assert_allclose(remainder, np.pi / 2, atol=DEFAULT_TOLERANCE)
 
 
 class IsGeometricEdgeTest(unittest.TestCase):
-    """Unit tests for the is_geometric_edge function."""
+    """Property-based tests for is_geometric_edge."""
 
-    def _make_flat_patch(self, size=32, depth=1.0):
-        return np.full((size, size), depth, dtype=np.float32)
+    @given(patch=flat_depth_image(), theta=angles, threshold=positive_thresholds)
+    @example(
+        patch=np.full((PATCH_SIZE, PATCH_SIZE), 1.0, dtype=np.float32),
+        theta=0.0,
+        threshold=0.01,
+    )
+    def test_flat_depth_returns_false(self, patch, theta, threshold):
+        self.assertFalse(is_geometric_edge(patch, theta, threshold))
 
-    def _make_step_patch(self, size=32):
-        """Left half=0.0, right half=1.0 (vertical step edge).
+    @given(theta=angles)
+    @example(theta=np.pi / 2)
+    @example(theta=0.0)
+    def test_theta_has_period_pi(self, theta):
+        result_base = is_geometric_edge(STEP_EDGE_IMAGE, theta)
+        result_shifted = is_geometric_edge(STEP_EDGE_IMAGE, theta + np.pi)
+        self.assertEqual(result_base, result_shifted)
 
-        Returns:
-            Grayscale float32 array with a vertical step at the midpoint.
-        """
-        patch = np.zeros((size, size), dtype=np.float32)
-        patch[:, size // 2 :] = 1.0
-        return patch
-
-    def test_flat_depth_returns_false(self):
-        patch = self._make_flat_patch()
-        self.assertFalse(is_geometric_edge(patch, edge_theta=0.0))
-
-    def test_step_edge_perpendicular_returns_true(self):
-        # Vertical step creates horizontal gradient (dx).
-        # edge_theta=pi/2 (vertical tangent) => edge normal at pi (along -x),
-        # which is aligned with the horizontal depth gradient => geometric edge.
-        patch = self._make_step_patch()
-        self.assertTrue(is_geometric_edge(patch, edge_theta=np.pi / 2))
-
-    def test_step_edge_parallel_returns_false(self):
-        # edge_theta=0 (horizontal tangent) => edge normal at pi/2 (along y),
-        # perpendicular to horizontal depth gradient => not detected.
-        patch = self._make_step_patch()
-        self.assertFalse(is_geometric_edge(patch, edge_theta=0.0))
-
-    def test_threshold_boundary(self):
-        # Mild gradient: small step, edge_theta=pi/2 so normal aligns with dx.
-        patch = np.zeros((32, 32), dtype=np.float32)
-        patch[:, 16:] = 0.001
-        self.assertFalse(
-            is_geometric_edge(patch, edge_theta=np.pi / 2, depth_threshold=1.0)
-        )
-        self.assertTrue(
-            is_geometric_edge(patch, edge_theta=np.pi / 2, depth_threshold=1e-6)
-        )
+    @given(theta=angles, t_low=positive_thresholds, t_high=positive_thresholds)
+    @example(theta=np.pi / 2, t_low=1e-6, t_high=1.0)
+    def test_lower_threshold_preserves_detection(self, theta, t_low, t_high):
+        assume(t_low < t_high)
+        if is_geometric_edge(STEP_EDGE_IMAGE, theta, t_high):
+            self.assertTrue(is_geometric_edge(STEP_EDGE_IMAGE, theta, t_low))
 
 
 class EdgeAngleTo2dPoseTest(unittest.TestCase):
-    """Unit tests for the edge_angle_to_2d_pose function."""
+    """Property-based tests for edge_angle_to_2d_pose."""
 
     def test_identity_camera_theta_zero(self):
+        """Canonical reference: identity camera, theta=0 aligns with world x-axis."""
         pose = edge_angle_to_2d_pose(theta=0.0, world_camera=np.eye(4))
-        np.testing.assert_array_almost_equal(pose[0], [0, 0, 1])
-        np.testing.assert_array_almost_equal(pose[1], [1, 0, 0])
-        np.testing.assert_array_almost_equal(pose[2], [0, 1, 0])
-
-    def test_identity_camera_theta_pi_half(self):
-        pose = edge_angle_to_2d_pose(theta=np.pi / 2, world_camera=np.eye(4))
-        np.testing.assert_array_almost_equal(pose[0], [0, 0, 1])
-        np.testing.assert_array_almost_equal(pose[1], [0, -1, 0])
-        np.testing.assert_array_almost_equal(pose[2], [1, 0, 0])
-
-    def test_identity_camera_theta_pi_quarter(self):
-        pose = edge_angle_to_2d_pose(theta=np.pi / 4, world_camera=np.eye(4))
-        s2 = np.sqrt(2) / 2
-        np.testing.assert_array_almost_equal(pose[0], [0, 0, 1])
-        np.testing.assert_array_almost_equal(pose[1], [s2, -s2, 0])
-        np.testing.assert_array_almost_equal(pose[2], [s2, s2, 0])
-
-    def test_normal_always_001(self):
-        for theta in [0, np.pi / 6, np.pi / 3, np.pi, 5.0]:
-            pose = edge_angle_to_2d_pose(theta, np.eye(4))
-            np.testing.assert_array_almost_equal(pose[0], [0, 0, 1])
-
-    def test_z_component_always_zero_for_tangents(self):
-        for theta in [0, np.pi / 4, np.pi / 2, np.pi]:
-            pose = edge_angle_to_2d_pose(theta, np.eye(4))
-            self.assertAlmostEqual(pose[1][2], 0.0)
-            self.assertAlmostEqual(pose[2][2], 0.0)
-
-    def test_orthonormality(self):
-        for theta in np.linspace(0, 2 * np.pi, 8, endpoint=False):
-            pose = edge_angle_to_2d_pose(theta, np.eye(4))
-            for i in range(3):
-                self.assertAlmostEqual(np.linalg.norm(pose[i]), 1.0, places=6)
-            for i in range(3):
-                for j in range(i + 1, 3):
-                    self.assertAlmostEqual(np.dot(pose[i], pose[j]), 0.0, places=6)
+        npt.assert_allclose(pose[0], [0, 0, 1])
+        npt.assert_allclose(pose[1], [1, 0, 0])
+        npt.assert_allclose(pose[2], [0, 1, 0])
 
     def test_tilted_camera_90_yaw(self):
-        # 90-degree CCW rotation around z: world_camera maps world -> camera.
-        # R = Rz(pi/2), so R.T @ [1,0,0] = first row of R = [0,1,0].
-        R = np.array(
-            [
-                [0, 1, 0],
-                [-1, 0, 0],
-                [0, 0, 1],
-            ],
-            dtype=float,
-        )
+        """Camera yawed 90 degrees CCW shifts world_theta by pi/2."""
+        # R = Rz(pi/2) so R.T @ [1,0,0] = [0, 1, 0], ref_angle = pi/2.
+        R = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]], dtype=float)  # noqa: N806
         cam = np.eye(4)
         cam[:3, :3] = R
         pose = edge_angle_to_2d_pose(theta=0.0, world_camera=cam)
-        # ref_angle = atan2(1,0) = pi/2, world_theta = pi/2
-        np.testing.assert_array_almost_equal(pose[1], [0, 1, 0])
-        np.testing.assert_array_almost_equal(pose[2], [-1, 0, 0])
+        npt.assert_allclose(pose[1], [0, 1, 0])
+        npt.assert_allclose(pose[2], [-1, 0, 0])
 
-    def test_translation_does_not_affect_result(self):
-        cam = np.eye(4)
-        cam[:3, 3] = [10.0, 20.0, 30.0]
-        pose_translated = edge_angle_to_2d_pose(np.pi / 3, cam)
-        pose_identity = edge_angle_to_2d_pose(np.pi / 3, np.eye(4))
-        np.testing.assert_array_almost_equal(pose_translated, pose_identity)
+    @given(theta=angles, cam=camera_4x4())
+    @example(theta=0.0, cam=np.eye(4))
+    def test_normal_is_001(self, theta, cam):
+        """Row 0 is always the world z-axis, regardless of theta or camera."""
+        pose = edge_angle_to_2d_pose(theta, cam)
+        npt.assert_allclose(pose[0], [0.0, 0.0, 1.0])
+
+    @given(theta=angles, cam=camera_4x4())
+    def test_tangent_and_perp_lie_in_xy_plane(self, theta, cam):
+        """Rows 1 and 2 always have zero z-component."""
+        pose = edge_angle_to_2d_pose(theta, cam)
+        npt.assert_allclose(pose[1][2], 0.0, atol=DEFAULT_TOLERANCE)
+        npt.assert_allclose(pose[2][2], 0.0, atol=DEFAULT_TOLERANCE)
+
+    @given(theta=angles, cam=camera_4x4())
+    @example(theta=0.0, cam=np.eye(4))
+    def test_orthonormality(self, theta, cam):
+        """Result is always an orthonormal frame (each row unit, all rows orthogonal)."""
+        pose = edge_angle_to_2d_pose(theta, cam)
+        for i in range(3):
+            npt.assert_allclose(np.linalg.norm(pose[i]), 1.0, atol=DEFAULT_TOLERANCE)
+        for i in range(3):
+            for j in range(i + 1, 3):
+                npt.assert_allclose(
+                    np.dot(pose[i], pose[j]), 0.0, atol=DEFAULT_TOLERANCE
+                )
+
+    @given(theta=angles, R=rotation_3x3())
+    def test_translation_invariance(self, theta, R):  # noqa: N803
+        """Translation component of the camera matrix does not affect the result."""
+        cam_no_t = np.eye(4)
+        cam_no_t[:3, :3] = R
+        cam_with_t = cam_no_t.copy()
+        cam_with_t[:3, 3] = [10.0, 20.0, 30.0]
+        npt.assert_allclose(
+            edge_angle_to_2d_pose(theta, cam_with_t),
+            edge_angle_to_2d_pose(theta, cam_no_t),
+        )
+
+    @given(theta=angles, cam=camera_4x4())
+    def test_theta_periodicity_2pi(self, theta, cam):
+        """Shifting theta by 2*pi returns the identical pose."""
+        tol = max(DEFAULT_TOLERANCE * abs(theta), DEFAULT_TOLERANCE)
+        npt.assert_allclose(
+            edge_angle_to_2d_pose(theta, cam),
+            edge_angle_to_2d_pose(theta + 2 * np.pi, cam),
+            atol=tol,
+        )
+
+    @given(theta=angles, cam=camera_4x4())
+    def test_theta_shift_pi_negates_tangent_and_perp(self, theta, cam):
+        """Shifting theta by pi negates the tangent and perp rows (normal unchanged)."""
+        tol = max(DEFAULT_TOLERANCE * abs(theta), DEFAULT_TOLERANCE)
+        pose = edge_angle_to_2d_pose(theta, cam)
+        pose_shifted = edge_angle_to_2d_pose(theta + np.pi, cam)
+        npt.assert_allclose(pose[0], pose_shifted[0], atol=tol)
+        npt.assert_allclose(pose[1], -pose_shifted[1], atol=tol)
+        npt.assert_allclose(pose[2], -pose_shifted[2], atol=tol)
 
 
 class ComputeWeightedStructureTensorEdgeFeaturesTest(unittest.TestCase):
