@@ -18,10 +18,87 @@ import torch
 from numpy.typing import ArrayLike
 from scipy.spatial.transform import Rotation
 
+from tbp.monty.math import DEFAULT_TOLERANCE
+
 logger = logging.getLogger(__name__)
 
 
-def normalize(v: ArrayLike, epsilon: float = 1e-12) -> np.ndarray:
+class TangentFrame:
+    """Orthonormal tangent frame on a surface.
+
+    Maintains a right-handed (u, v, n) basis where n is the surface normal,
+    u is the horizontal tangent direction, and v is the vertical tangent
+    direction. As the sensor moves across a curved surface, `transport()`
+    rotates the tangent frame to match the new normal.
+
+    See:
+        https://en.wikipedia.org/wiki/Parallel_transport
+
+    Args:
+        surface_normal: Unit surface normal at the initial point.
+    """
+
+    def __init__(self, surface_normal: np.ndarray) -> None:
+        """Initialize an orthonormal (u, v) basis in the tangent plane of a surface.
+
+        A surface normal defines a tangent plane but not a unique basis. We choose
+        `basis_u` as the cross product of `some_axis` and the `surface_normal`, giving
+        a horizontal tangent direction. `basis_v` follows as the cross product of
+        the `surface_normal` and `basis_u`.
+
+        If the `surface_normal` is nearly parallel to some_axis (|cos(theta)| > 0.95),
+        we fall back to using [0, 0, 1] to avoid a degenerate cross product.
+
+        Args:
+            surface_normal: Unit surface normal at the initial point.
+        """
+        # some_axis is arbitrarily chosen
+        some_axis = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+        self._normal = normalize(surface_normal)
+
+        if is_parallel(some_axis, self._normal):
+            some_axis = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+
+        self._u = normalize(np.cross(some_axis, self._normal))
+        self._v = normalize(np.cross(self._normal, self._u))
+
+    @property
+    def basis_u(self) -> np.ndarray:
+        """Horizontal tangent basis vector."""
+        return self._u
+
+    @property
+    def basis_v(self) -> np.ndarray:
+        """Vertical tangent basis vector."""
+        return self._v
+
+    def transport(self, new_normal: np.ndarray) -> None:
+        """Parallel-transport the frame to a new surface normal.
+
+        As the sensor moves along a curved surface, the tangent plane
+        rotates with the curvature (e.g. around a cylinder). Parallel
+        transport transforms the basis (u, v) by exactly the rotation needed
+        to stay in the new tangent plane. This is analogous to "unrolling"
+        the curved surface.
+
+        Args:
+            new_normal: Unit surface normal at the new point.
+        """
+        old_normal = self._normal
+
+        if not is_parallel(old_normal, new_normal):
+            cos_angle = np.clip(np.dot(old_normal, new_normal), -1.0, 1.0)
+            rotation_axis = normalize(np.cross(old_normal, new_normal))
+            rotation = Rotation.from_rotvec(rotation_axis * np.arccos(cos_angle))
+            self._u = rotation.apply(self._u)
+
+        # Re-orthonormalize to prevent cumulative floating point error
+        self._u = normalize(project_onto_tangent_plane(self._u, new_normal))
+        self._v = np.cross(new_normal, self._u)
+        self._normal = new_normal.copy()
+
+
+def normalize(v: ArrayLike, epsilon: float = DEFAULT_TOLERANCE) -> np.ndarray:
     """Normalize a vector to unit length.
 
     Args:
@@ -29,7 +106,7 @@ def normalize(v: ArrayLike, epsilon: float = 1e-12) -> np.ndarray:
         epsilon: Small epsilon value below which the vector is considered zero.
 
     Returns:
-        Unit vector in the direction of v.
+        Unit vector in the direction of v in v's dtype.
 
     Raises:
         ValueError: If the vector has near-zero length (norm < epsilon).
@@ -58,91 +135,25 @@ def project_onto_tangent_plane(v: ArrayLike, n: ArrayLike) -> np.ndarray:
     return v - np.dot(v, n) * n
 
 
-class TangentFrame:
-    """Orthonormal tangent frame on a surface.
+def is_parallel(
+    v1: ArrayLike, v2: ArrayLike, tolerance: float = DEFAULT_TOLERANCE
+) -> bool:
+    """True when v1 and v2 point in the same or opposite direction.
 
-    Maintains a right-handed (u, v, n) basis where n is the surface normal,
-    u is the horizontal tangent direction, and v is the vertical tangent
-    direction. As the sensor moves across a curved surface, ``transport()``
-    rotates the tangent frame to match the new normal.
-
-    See:
-        https://en.wikipedia.org/wiki/Parallel_transport
+    Assumes unit-length inputs. The metric 1 - |cos(theta)| is compared
+    against tolerance.
 
     Args:
-        surface_normal: Unit surface normal at the initial point.
+        v1: First unit vector.
+        v2: Second unit vector.
+        tolerance: Maximum value of 1 - |cos(theta)| to consider parallel.
+
+    Returns:
+        True if v1 and v2 are parallel (same or opposite direction).
     """
-
-    def __init__(self, surface_normal: np.ndarray) -> None:
-        """Initialize an orthonormal (u, v) basis in the tangent plane of a surface.
-
-        A surface normal defines a tangent plane but not a unique basis. Here,
-        we arbitrarily choose v to be close to world_up, unless the surface normal
-        is nearly parallel to the world_up. Then, u is computed as the horizontal
-        tangent direction via cross products.
-
-        Args:
-            surface_normal: Unit surface normal at the initial point.
-        """
-        world_up = np.array([0, 1, 0])
-
-        if abs(np.dot(world_up, surface_normal)) > 0.95:
-            world_up = np.array([0, 0, 1])
-
-        self._u = np.cross(world_up, surface_normal)
-        self._u = normalize(self._u)
-
-        self._v = np.cross(surface_normal, self._u)
-
-        self._normal = surface_normal.copy()
-
-    @property
-    def basis_u(self) -> np.ndarray:
-        """Horizontal tangent basis vector."""
-        return self._u
-
-    @property
-    def basis_v(self) -> np.ndarray:
-        """Vertical tangent basis vector."""
-        return self._v
-
-    def transport(self, new_normal: np.ndarray) -> None:
-        """Parallel-transport the frame to a new surface normal.
-
-        As the sensor moves along a curved surface, the tangent plane
-        rotates with the curvature (e.g. around a cylinder). Parallel
-        transport transforms the basis (u, v) by exactly the rotation needed
-        to stay in the new tangent plane. This is analogous to "unrolling"
-        the curved surface.
-
-        Args:
-            new_normal: Unit surface normal at the new point.
-        """
-        old_normal = self._normal
-        # cos_angle = 1 means 0 deg (normals identical),
-        # cos_angle = -1 means 180 deg (normals opposite).
-        cos_angle = np.clip(np.dot(old_normal, new_normal), -1.0, 1.0)
-
-        normals_are_parallel = abs(cos_angle) > 1.0 - 1e-10
-        if normals_are_parallel:
-            if cos_angle < 0:
-                self._v = -self._v
-            self._normal = new_normal.copy()
-            return
-
-        # Construct the rotation matrix to apply to the basis vectors
-        rotation_axis = np.cross(old_normal, new_normal)
-        rotation_axis = normalize(rotation_axis)
-        rotation_angle = np.arccos(cos_angle)
-        rotation = Rotation.from_rotvec(rotation_axis * rotation_angle)
-
-        self._u = rotation.apply(self._u)
-
-        # Reset u and v to ensure the basis remains orthonormal.
-        self._u = normalize(self._u - np.dot(self._u, new_normal) * new_normal)
-        self._v = np.cross(new_normal, self._u)
-
-        self._normal = new_normal.copy()
+    v1 = np.asarray(v1)
+    v2 = np.asarray(v2)
+    return 1.0 - abs(np.dot(v1, v2)) < tolerance
 
 
 def rotations_to_quats(rotations, invert=False):
@@ -233,7 +244,7 @@ def get_angle_beefed_up(v1, v2):
     if v1 is None or v2 is None:
         return np.inf
 
-    if np.all(v1 == 0) or np.all(v2 == 0):
+    if np.linalg.norm(v1) < DEFAULT_TOLERANCE or np.linalg.norm(v2) < DEFAULT_TOLERANCE:
         return np.inf
 
     v1_u = normalize(v1)
