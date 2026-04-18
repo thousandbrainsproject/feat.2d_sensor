@@ -36,8 +36,7 @@ def rotation_3x3(draw):
     """
     seed = draw(st.integers(min_value=0, max_value=2**32 - 1))
     rng = np.random.default_rng(seed)
-    rot = Rotation.random(random_state=rng).as_matrix()
-    return rot
+    return Rotation.random(random_state=rng).as_matrix()
 
 
 @st.composite
@@ -75,8 +74,6 @@ def flat_depth_image(draw):
 
 
 class GradientToTangentAngleTest(unittest.TestCase):
-    """Property-based tests for gradient_to_tangent_angle."""
-
     @given(gradient_angle=angles)
     def test_result_in_range(self, gradient_angle):
         result = gradient_to_tangent_angle(gradient_angle)
@@ -90,8 +87,6 @@ class GradientToTangentAngleTest(unittest.TestCase):
 
 
 class IsGeometricEdgeTest(unittest.TestCase):
-    """Property-based tests for is_geometric_edge."""
-
     @given(patch=flat_depth_image(), theta=angles, threshold=positive_thresholds)
     @example(
         patch=np.full((PATCH_SIZE, PATCH_SIZE), 1.0, dtype=np.float32),
@@ -118,8 +113,6 @@ class IsGeometricEdgeTest(unittest.TestCase):
 
 
 class EdgeAngleTo2dPoseTest(unittest.TestCase):
-    """Property-based tests for edge_angle_to_2d_pose."""
-
     def test_identity_camera_theta_zero(self):
         """Canonical reference: identity camera, theta=0 aligns with world x-axis."""
         pose = edge_angle_to_2d_pose(theta=0.0, world_camera=np.eye(4))
@@ -154,7 +147,7 @@ class EdgeAngleTo2dPoseTest(unittest.TestCase):
     @given(theta=angles, cam=camera_4x4())
     @example(theta=0.0, cam=np.eye(4))
     def test_orthonormality(self, theta, cam):
-        """Result is always an orthonormal frame (each row unit, all rows orthogonal)."""
+        """Result is always an orthonormal frame (unit rows, mutually orthogonal)."""
         pose = edge_angle_to_2d_pose(theta, cam)
         for i in range(3):
             npt.assert_allclose(np.linalg.norm(pose[i]), 1.0, atol=DEFAULT_TOLERANCE)
@@ -198,8 +191,6 @@ class EdgeAngleTo2dPoseTest(unittest.TestCase):
 
 
 class ComputeWeightedStructureTensorEdgeFeaturesTest(unittest.TestCase):
-    """Unit tests for compute_weighted_structure_tensor_edge_features."""
-
     @staticmethod
     def _make_rgb_patch(size, pattern) -> np.ndarray:
         """Generate synthetic RGB patches for testing.
@@ -296,7 +287,3 @@ class ComputeWeightedStructureTensorEdgeFeaturesTest(unittest.TestCase):
         _, _, theta = compute_weighted_structure_tensor_edge_features(patch)
         self.assertGreaterEqual(theta, 0.0)
         self.assertLess(theta, 2 * np.pi)
-
-
-if __name__ == "__main__":
-    unittest.main()

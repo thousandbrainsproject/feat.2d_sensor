@@ -11,18 +11,13 @@ from __future__ import annotations
 
 import logging
 import unittest
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import numpy.testing as nptest
-import quaternion as qt
-from parameterized import parameterized_class
 
-from tbp.monty.context import RuntimeContext
-from tbp.monty.frameworks.models.motor_system_state import AgentState, SensorState
 from tbp.monty.cmp import Message
 from tbp.monty.frameworks.models.two_d_sensor_module import TwoDSensorModule
-from tbp.monty.frameworks.sensors import SensorID
 from tbp.monty.frameworks.utils.edge_detection import EdgeDetectionConfig
 
 MODULE_PATH = "tbp.monty.frameworks.models.two_d_sensor_module"
@@ -32,6 +27,9 @@ def make_state(**overrides):
     """Create a Message with sensible defaults.
 
     use_state=False by default to skip _check_all_attributes() validation.
+
+    Returns:
+        A Message constructed from defaults merged with overrides.
     """
     defaults = dict(
         location=np.array([1.0, 2.0, 3.0]),
@@ -50,7 +48,11 @@ def make_state(**overrides):
 
 
 def make_module(**overrides):
-    """Create a TwoDSensorModule with minimal valid args."""
+    """Create a TwoDSensorModule with minimal valid args.
+
+    Returns:
+        A TwoDSensorModule constructed from defaults merged with overrides.
+    """
     defaults = dict(
         sensor_module_id="test_sm",
         features=["edge_strength", "coherence", "on_object"],
@@ -128,7 +130,7 @@ class TestExtract2dEdge(unittest.TestCase):
         f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
         return_value=(0.5, 0.8, 1.0),
     )
-    def test_geometric_edge_filtered_out(self, _mock_compute, _mock_geo):
+    def test_geometric_edge_filtered_out(self, _mock_compute, _mock_geo):  # noqa: PT019
         state = self._base_state()
         result = self.sm._extract_2d_edge(
             state, self.rgba, self.world_camera, depth_image=self.depth
@@ -139,7 +141,7 @@ class TestExtract2dEdge(unittest.TestCase):
         f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
         return_value=(0.01, 0.9, 0.5),
     )
-    def test_below_strength_threshold(self, _mock_compute):
+    def test_below_strength_threshold(self, _mock_compute):  # noqa: PT019
         state = self._base_state()
         result = self.sm._extract_2d_edge(state, self.rgba, self.world_camera)
         self.assertFalse(state.morphological_features["pose_fully_defined"])
@@ -149,7 +151,7 @@ class TestExtract2dEdge(unittest.TestCase):
         f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
         return_value=(0.5, 0.1, 0.5),
     )
-    def test_below_coherence_threshold(self, _mock_compute):
+    def test_below_coherence_threshold(self, _mock_compute):  # noqa: PT019
         state = self._base_state()
         result = self.sm._extract_2d_edge(state, self.rgba, self.world_camera)
         self.assertFalse(state.morphological_features["pose_fully_defined"])
@@ -164,7 +166,7 @@ class TestExtract2dEdge(unittest.TestCase):
         f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
         return_value=(0.5, 0.8, 0.7),
     )
-    def test_successful_edge_updates_pose(self, _mc, _mg, _mt):
+    def test_successful_edge_updates_pose(self, _mc, _mg, _mt):  # noqa: PT019
         state = self._base_state()
         result = self.sm._extract_2d_edge(
             state, self.rgba, self.world_camera, depth_image=self.depth
@@ -186,7 +188,7 @@ class TestExtract2dEdge(unittest.TestCase):
         f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
         return_value=(0.5, 0.8, 0.7),
     )
-    def test_strips_alpha_channel(self, mock_compute, _mg, _mt):
+    def test_strips_alpha_channel(self, mock_compute, _mg, _mt):  # noqa: PT019
         state = self._base_state()
         rgba_4ch = np.zeros((32, 32, 4), dtype=np.uint8)
         self.sm._extract_2d_edge(
@@ -201,7 +203,7 @@ class TestExtract2dEdge(unittest.TestCase):
         f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
         return_value=(0.5, 0.8, 0.7),
     )
-    def test_no_depth_skips_geometric_check(self, _mc, _mt, mock_geo):
+    def test_no_depth_skips_geometric_check(self, _mc, _mt, mock_geo):  # noqa: PT019
         state = self._base_state()
         self.sm._extract_2d_edge(state, self.rgba, self.world_camera, depth_image=None)
         mock_geo.assert_not_called()
@@ -210,7 +212,7 @@ class TestExtract2dEdge(unittest.TestCase):
         f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
         return_value=(0.5, 0.8, np.pi / 4),
     )
-    def test_edge_pose_uses_2d_rotation(self, _mc):
+    def test_edge_pose_uses_2d_rotation(self, _mc):  # noqa: PT019
         """Verify edge_angle_to_2d_pose is called with orientation and camera."""
         state = self._base_state()
         with patch(f"{MODULE_PATH}.edge_angle_to_2d_pose") as mock_pose:
@@ -228,7 +230,7 @@ class TestExtract2dEdge(unittest.TestCase):
         f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
         return_value=(0.5, 0.8, 0.7),
     )
-    def test_omits_features_not_in_list(self, _mc, _mt):
+    def test_omits_features_not_in_list(self, _mc, _mt):  # noqa: PT019
         sm = make_module(features=["coherence", "on_object"])
         state = self._base_state()
         result = sm._extract_2d_edge(state, self.rgba, self.world_camera)

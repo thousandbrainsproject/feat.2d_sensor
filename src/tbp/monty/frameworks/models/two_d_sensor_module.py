@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 import quaternion as qt
 
+from tbp.monty.cmp import Message
 from tbp.monty.context import RuntimeContext
 from tbp.monty.frameworks.models.abstract_monty_classes import SensorModule
 from tbp.monty.frameworks.models.motor_system_state import (
@@ -31,7 +32,6 @@ from tbp.monty.frameworks.models.sensor_modules import (
     PerceptFilter,
     SnapshotTelemetry,
 )
-from tbp.monty.cmp import Message
 from tbp.monty.frameworks.sensors import SensorID
 from tbp.monty.frameworks.utils.edge_detection import (
     EdgeDetectionConfig,
@@ -165,6 +165,8 @@ class TwoDSensorModule(SensorModule):
         Args:
             ctx: The runtime context.
             data: Raw observations.
+            motor_only_step: If True, mark the resulting Message as not to be
+                passed to an LM.
 
         Returns:
             Message with features and morphological features. Noise may be added.
