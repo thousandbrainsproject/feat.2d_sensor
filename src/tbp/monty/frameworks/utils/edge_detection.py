@@ -124,23 +124,76 @@ def edge_angle_to_2d_pose(
     )
 
 
-def _compute_structure_tensor(
+@dataclass
+class StructureTensor:
+    """Structure tensor at a single point: a 2x2 symmetric matrix [[Jxx, Jxy], [Jxy, Jyy]]."""
+
+    Jxx: float
+    Jyy: float
+    Jxy: float
+
+    @property
+    def eigenvalues(self) -> tuple[float, float]:
+        """Returns (lambda_min, lambda_max) of the 2x2 structure tensor."""
+        matrix = np.array([[self.Jxx, self.Jxy], [self.Jxy, self.Jyy]])
+        lambda_min, lambda_max = np.linalg.eigh(matrix)[0]
+        return lambda_min, lambda_max
+
+    @property
+    def gradient_theta(self) -> float:
+        """Gradient direction in radians (normal to the dominant edge)."""
+        return 0.5 * np.arctan2(2.0 * self.Jxy, self.Jxx - self.Jyy)
+
+    @property
+    def edge_strength(self) -> float:
+        """Magnitude of the dominant eigenvalue."""
+        _, lambda_max = self.eigenvalues
+        return np.sqrt(max(lambda_max, 0.0))
+
+    @property
+    def coherence(self) -> float:
+        """Edge quality in [0, 1]: 1 means perfectly oriented, 0 means isotropic."""
+        lambda_min, lambda_max = self.eigenvalues
+        return (lambda_max - lambda_min) / (lambda_max + lambda_min + 1e-12)
+
+    @property
+    def edge_orientation(self) -> float:
+        """Edge orientation angle in [0, pi) radians."""
+        return gradient_to_tangent_angle(self.gradient_theta)
+
+
+def _compute_sobel_gradients(
     gray: np.ndarray,
-    config: EdgeDetectionConfig,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Compute Sobel gradients and smoothed structure tensor components.
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute horizontal and vertical Sobel gradients.
 
     Args:
         gray: Grayscale image patch as float32 in [0, 1].
-        config: Edge detection configuration.
 
     Returns:
-        Tuple of (Jxx, Jyy, Jxy, Ix, Iy) where Jxx/Jyy/Jxy are the
-        Gaussian-smoothed outer-product components and Ix/Iy are the raw gradients.
+        Tuple of (Ix, Iy): horizontal and vertical gradient arrays.
     """
     Ix = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)  # noqa: N806
     Iy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)  # noqa: N806
+    return Ix, Iy
 
+
+def _compute_structure_tensor_field(
+    Ix: np.ndarray,  # noqa: N803
+    Iy: np.ndarray,  # noqa: N803
+    config: EdgeDetectionConfig,
+) -> np.ndarray:
+    """Build the smoothed per-pixel structure tensor field from Sobel gradients.
+
+    Args:
+        Ix: Horizontal Sobel gradients.
+        Iy: Vertical Sobel gradients.
+        config: Edge detection configuration.
+
+    Returns:
+        Array of shape (h, w, 2, 2) where each entry is the Gaussian-smoothed
+        2x2 structure tensor [[Jxx, Jxy], [Jxy, Jyy]] at that pixel.
+    """
     Jxx = Ix * Ix  # noqa: N806
     Jyy = Iy * Iy  # noqa: N806
     Jxy = Ix * Iy  # noqa: N806
@@ -151,7 +204,13 @@ def _compute_structure_tensor(
     Jyy = cv2.GaussianBlur(Jyy, (ksize, ksize), sigma)  # noqa: N806
     Jxy = cv2.GaussianBlur(Jxy, (ksize, ksize), sigma)  # noqa: N806
 
-    return Jxx, Jyy, Jxy, Ix, Iy
+    h, w = Jxx.shape
+    field = np.empty((h, w, 2, 2), dtype=np.float32)
+    field[..., 0, 0] = Jxx
+    field[..., 1, 1] = Jyy
+    field[..., 0, 1] = Jxy
+    field[..., 1, 0] = Jxy
+    return field
 
 
 def _compute_center_weights(
@@ -190,38 +249,27 @@ def _compute_center_weights(
 
 
 def _aggregate_tensor(
-    Jxx: np.ndarray,  # noqa: N803
-    Jyy: np.ndarray,  # noqa: N803
-    Jxy: np.ndarray,  # noqa: N803
+    tensor_field: np.ndarray,
     weights: np.ndarray,
     total_weight: float,
-) -> tuple[float, float, float, float]:
-    """Compute edge strength, coherence, and orientation from weighted tensor.
+) -> StructureTensor:
+    """Reduce a per-pixel structure tensor field to a single representative tensor.
 
     Args:
-        Jxx, Jyy, Jxy: Smoothed structure tensor components.
-        weights: Per-pixel weights.
+        tensor_field: Per-pixel structure tensors, shape (h, w, 2, 2).
+        weights: Per-pixel weights, shape (h, w).
         total_weight: Sum of weights (must be > 0).
 
     Returns:
-        Tuple of (edge_strength, coherence, tangent_theta, gradient_theta).
-        gradient_theta is included for downstream center-offset check.
+        StructureTensor representing the weighted aggregate over the patch.
     """
-    Jxx_bar = np.sum(weights * Jxx) / total_weight  # noqa: N806
-    Jyy_bar = np.sum(weights * Jyy) / total_weight  # noqa: N806
-    Jxy_bar = np.sum(weights * Jxy) / total_weight  # noqa: N806
-
-    disc = np.sqrt((Jxx_bar - Jyy_bar) ** 2 + 4.0 * Jxy_bar**2)
-    lam1 = 0.5 * (Jxx_bar + Jyy_bar + disc)
-    lam2 = 0.5 * (Jxx_bar + Jyy_bar - disc)
-
-    edge_strength = float(np.sqrt(max(lam1, 0.0)))
-    coherence = float((lam1 - lam2) / (lam1 + lam2 + 1e-12))
-
-    gradient_theta = float(0.5 * np.arctan2(2.0 * Jxy_bar, Jxx_bar - Jyy_bar))
-    tangent_theta = float(gradient_to_tangent_angle(gradient_theta))
-
-    return edge_strength, coherence, tangent_theta, gradient_theta
+    w = weights[..., np.newaxis, np.newaxis]
+    aggregated = np.sum(w * tensor_field, axis=(0, 1)) / total_weight
+    return StructureTensor(
+        Jxx=float(aggregated[0, 0]),
+        Jyy=float(aggregated[1, 1]),
+        Jxy=float(aggregated[0, 1]),
+    )
 
 
 def _passes_center_check(
@@ -280,10 +328,10 @@ def compute_weighted_structure_tensor_edge_features(
             default EdgeDetectionConfig.
 
     Returns:
-        Tuple of (edge_strength, coherence, tangent_theta):
+        Tuple of (edge_strength, coherence, edge_orientation):
             - edge_strength: Magnitude of dominant eigenvalue (0.0 if no edge)
             - coherence: Edge quality metric in [0, 1] (0.0 if no edge)
-            - tangent_theta: Edge tangent angle in [0, 2*pi) radians (None if no edge)
+            - edge_orientation: Edge orientation angle in [0, pi) radians (None if no edge)
 
     Notes:
         1. The Gaussian blur (Step 1) convolves all pixels in the patch with a
@@ -297,7 +345,8 @@ def compute_weighted_structure_tensor_edge_features(
         edge_detection_config = EdgeDetectionConfig()
 
     gray = cv2.cvtColor(patch, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
-    Jxx, Jyy, Jxy, Ix, Iy = _compute_structure_tensor(gray, edge_detection_config)  # noqa: N806
+    Ix, Iy = _compute_sobel_gradients(gray)  # noqa: N806
+    tensor_field = _compute_structure_tensor_field(Ix, Iy, edge_detection_config)
 
     weights, total_weight, r0, c0, rows, cols = _compute_center_weights(
         gray.shape, Ix, Iy, edge_detection_config
@@ -305,14 +354,12 @@ def compute_weighted_structure_tensor_edge_features(
     if total_weight < 1e-12:
         return 0.0, 0.0, None
 
-    edge_strength, coherence, tangent_theta, gradient_theta = _aggregate_tensor(
-        Jxx, Jyy, Jxy, weights, total_weight
-    )
+    aggregated = _aggregate_tensor(tensor_field, weights, total_weight)
 
     if not _passes_center_check(
         weights,
         total_weight,
-        gradient_theta,
+        aggregated.gradient_theta,
         rows,
         cols,
         r0,
@@ -321,4 +368,4 @@ def compute_weighted_structure_tensor_edge_features(
     ):
         return 0.0, 0.0, None
 
-    return float(edge_strength), float(coherence), float(tangent_theta)
+    return float(aggregated.edge_strength), float(aggregated.coherence), float(aggregated.edge_orientation)
