@@ -27,11 +27,11 @@ from tbp.monty.frameworks.models.sensor_modules import (
     MessageNoise,
     NoMessageNoise,
     ObservationProcessor,
-    PassthroughStateFilter,
+    PassthroughPerceptFilter,
+    PerceptFilter,
     SnapshotTelemetry,
-    StateFilter,
 )
-from tbp.monty.frameworks.models.states import State
+from tbp.monty.cmp import Message
 from tbp.monty.frameworks.sensors import SensorID
 from tbp.monty.frameworks.utils.edge_detection import (
     EdgeDetectionConfig,
@@ -108,11 +108,11 @@ class TwoDSensorModule(SensorModule):
         else:
             self._message_noise = NoMessageNoise()
         if delta_thresholds:
-            self._state_filter: StateFilter = FeatureChangeFilter(
+            self._percept_filter: PerceptFilter = FeatureChangeFilter(
                 delta_thresholds=delta_thresholds
             )
         else:
-            self._state_filter = PassthroughStateFilter()
+            self._percept_filter = PassthroughPerceptFilter()
         self._snapshot_telemetry = SnapshotTelemetry()
 
         self.features = features
@@ -137,7 +137,7 @@ class TwoDSensorModule(SensorModule):
 
     def pre_episode(self) -> None:
         self._snapshot_telemetry.reset()
-        self._state_filter.reset()
+        self._percept_filter.reset()
         self.is_exploring = False
         self.processed_obs = []
         self.states = []
@@ -159,7 +159,7 @@ class TwoDSensorModule(SensorModule):
         state_dict.update(processed_observations=self.processed_obs)
         return state_dict
 
-    def step(self, ctx: RuntimeContext, data, motor_only_step: bool = False) -> State:
+    def step(self, ctx: RuntimeContext, data, motor_only_step: bool = False) -> Message:
         """Turn raw observations into dict of features at location.
 
         Args:
@@ -167,7 +167,7 @@ class TwoDSensorModule(SensorModule):
             data: Raw observations.
 
         Returns:
-            State with features and morphological features. Noise may be added.
+            Message with features and morphological features. Noise may be added.
             use_state flag may be set.
         """
         if self.save_raw_obs and not self.is_exploring:
@@ -225,7 +225,7 @@ class TwoDSensorModule(SensorModule):
             observed_state, curvature_pose_vectors, true_surface_normal
         )
 
-        observed_state = self._state_filter(observed_state)
+        observed_state = self._percept_filter(observed_state)
 
         if not self.is_exploring:
             self.processed_obs.append(observed_state.__dict__)
@@ -235,18 +235,18 @@ class TwoDSensorModule(SensorModule):
 
     def _extract_2d_edge(
         self,
-        state: State,
+        state: Message,
         rgba_image: np.ndarray,
         world_camera: np.ndarray,
         depth_image: np.ndarray | None = None,
-    ) -> State:
+    ) -> Message:
         """Extract 2D edge-based pose if edge is detected.
 
         This method attempts to create a fully-defined pose (normal + 2 tangents)
         using edge detection, replacing the standard curvature-based tangents.
 
         Args:
-            state: State with standard features from ObservationProcessor
+            state: Message with standard features from ObservationProcessor
             rgba_image: RGBA image patch
             world_camera: World to camera transformation matrix
             depth_image: Optional depth image patch for filtering geometric edges.
@@ -254,7 +254,7 @@ class TwoDSensorModule(SensorModule):
                 surface creases) are filtered out, keeping only texture edges.
 
         Returns:
-            State with edge-based pose vectors if edge detected,
+            Message with edge-based pose vectors if edge detected,
             otherwise returns the original state unchanged.
         """
         if "pose_vectors" not in state.morphological_features:
@@ -306,14 +306,14 @@ class TwoDSensorModule(SensorModule):
 
     def _update_2d_position_and_displacement(
         self,
-        observed_state: State,
+        observed_state: Message,
         curvature_pose_vectors: np.ndarray | None,
         surface_normal: np.ndarray | None,
-    ) -> State:
+    ) -> Message:
         """Project the 3D step onto the tangent plane to get a 2D displacement.
 
         Args:
-            observed_state: State to update with 2D displacement and position.
+            observed_state: Message to update with 2D displacement and position.
             curvature_pose_vectors: Curvature-based pose vectors used for
                 arc-length correction. If None, chord length is used as-is.
             surface_normal: True surface normal from curvature estimation,

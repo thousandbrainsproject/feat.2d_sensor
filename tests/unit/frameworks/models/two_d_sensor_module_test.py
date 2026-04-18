@@ -20,7 +20,7 @@ from parameterized import parameterized_class
 
 from tbp.monty.context import RuntimeContext
 from tbp.monty.frameworks.models.motor_system_state import AgentState, SensorState
-from tbp.monty.frameworks.models.states import State
+from tbp.monty.cmp import Message
 from tbp.monty.frameworks.models.two_d_sensor_module import TwoDSensorModule
 from tbp.monty.frameworks.sensors import SensorID
 from tbp.monty.frameworks.utils.edge_detection import EdgeDetectionConfig
@@ -29,7 +29,7 @@ MODULE_PATH = "tbp.monty.frameworks.models.two_d_sensor_module"
 
 
 def make_state(**overrides):
-    """Create a State with sensible defaults.
+    """Create a Message with sensible defaults.
 
     use_state=False by default to skip _check_all_attributes() validation.
     """
@@ -46,7 +46,7 @@ def make_state(**overrides):
         sender_type="SM",
     )
     defaults.update(overrides)
-    return State(**defaults)
+    return Message(**defaults)
 
 
 def make_module(**overrides):

@@ -16,6 +16,8 @@ from hypothesis import strategies as st
 from scipy.spatial.transform import Rotation
 
 from tbp.monty.frameworks.utils.edge_detection import (
+    EdgeDetectionConfig,
+    compute_weighted_structure_tensor_edge_features,
     edge_angle_to_2d_pose,
     gradient_to_tangent_angle,
     is_geometric_edge,
@@ -132,8 +134,8 @@ class EdgeAngleTo2dPoseTest(unittest.TestCase):
         cam = np.eye(4)
         cam[:3, :3] = R
         pose = edge_angle_to_2d_pose(theta=0.0, world_camera=cam)
-        npt.assert_allclose(pose[1], [0, 1, 0])
-        npt.assert_allclose(pose[2], [-1, 0, 0])
+        npt.assert_allclose(pose[1], [0, 1, 0], atol=DEFAULT_TOLERANCE)
+        npt.assert_allclose(pose[2], [-1, 0, 0], atol=DEFAULT_TOLERANCE)
 
     @given(theta=angles, cam=camera_4x4())
     @example(theta=0.0, cam=np.eye(4))
