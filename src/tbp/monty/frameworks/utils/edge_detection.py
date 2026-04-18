@@ -124,6 +124,141 @@ def edge_angle_to_2d_pose(
     )
 
 
+def _compute_structure_tensor(
+    gray: np.ndarray,
+    config: EdgeDetectionConfig,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Compute Sobel gradients and smoothed structure tensor components.
+
+    Args:
+        gray: Grayscale image patch as float32 in [0, 1].
+        config: Edge detection configuration.
+
+    Returns:
+        Tuple of (Jxx, Jyy, Jxy, Ix, Iy) where Jxx/Jyy/Jxy are the
+        Gaussian-smoothed outer-product components and Ix/Iy are the raw gradients.
+    """
+    Ix = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)  # noqa: N806
+    Iy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)  # noqa: N806
+
+    Jxx = Ix * Ix  # noqa: N806
+    Jyy = Iy * Iy  # noqa: N806
+    Jxy = Ix * Iy  # noqa: N806
+
+    ksize = config.kernel_size
+    sigma = config.gaussian_sigma
+    Jxx = cv2.GaussianBlur(Jxx, (ksize, ksize), sigma)  # noqa: N806
+    Jyy = cv2.GaussianBlur(Jyy, (ksize, ksize), sigma)  # noqa: N806
+    Jxy = cv2.GaussianBlur(Jxy, (ksize, ksize), sigma)  # noqa: N806
+
+    return Jxx, Jyy, Jxy, Ix, Iy
+
+
+def _compute_center_weights(
+    shape: tuple[int, int],
+    Ix: np.ndarray,  # noqa: N803
+    Iy: np.ndarray,  # noqa: N803
+    config: EdgeDetectionConfig,
+) -> tuple[np.ndarray, float, int, int, np.ndarray, np.ndarray]:
+    """Build radial + gradient-strength weight map centered on the patch.
+
+    Weights combine a Gaussian radial falloff (suppressing far-from-center pixels)
+    with local gradient magnitude (so strong off-center edges still contribute).
+
+    Args:
+        shape: (height, width) of the patch.
+        Ix: Horizontal Sobel gradients.
+        Iy: Vertical Sobel gradients.
+        config: Edge detection configuration.
+
+    Returns:
+        Tuple of (weights, total_weight, r0, c0, rows, cols).
+        rows/cols and r0/c0 are returned for reuse in the center-offset check.
+    """
+    h, w = shape
+    r0, c0 = h // 2, w // 2
+
+    rows, cols = np.meshgrid(np.arange(h), np.arange(w), indexing="ij")
+    d_squared = (rows - r0) ** 2 + (cols - c0) ** 2
+    d = np.sqrt(d_squared)
+
+    w_r = np.exp(-d_squared / (2.0 * config.sigma_r**2))
+    w_r[d > config.radius] = 0.0
+    weights = w_r * (Ix**2 + Iy**2)
+
+    return weights, float(np.sum(weights)), r0, c0, rows, cols
+
+
+def _aggregate_tensor(
+    Jxx: np.ndarray,  # noqa: N803
+    Jyy: np.ndarray,  # noqa: N803
+    Jxy: np.ndarray,  # noqa: N803
+    weights: np.ndarray,
+    total_weight: float,
+) -> tuple[float, float, float, float]:
+    """Compute edge strength, coherence, and orientation from weighted tensor.
+
+    Args:
+        Jxx, Jyy, Jxy: Smoothed structure tensor components.
+        weights: Per-pixel weights.
+        total_weight: Sum of weights (must be > 0).
+
+    Returns:
+        Tuple of (edge_strength, coherence, tangent_theta, gradient_theta).
+        gradient_theta is included for downstream center-offset check.
+    """
+    Jxx_bar = np.sum(weights * Jxx) / total_weight  # noqa: N806
+    Jyy_bar = np.sum(weights * Jyy) / total_weight  # noqa: N806
+    Jxy_bar = np.sum(weights * Jxy) / total_weight  # noqa: N806
+
+    disc = np.sqrt((Jxx_bar - Jyy_bar) ** 2 + 4.0 * Jxy_bar**2)
+    lam1 = 0.5 * (Jxx_bar + Jyy_bar + disc)
+    lam2 = 0.5 * (Jxx_bar + Jyy_bar - disc)
+
+    edge_strength = float(np.sqrt(max(lam1, 0.0)))
+    coherence = float((lam1 - lam2) / (lam1 + lam2 + 1e-12))
+
+    gradient_theta = float(0.5 * np.arctan2(2.0 * Jxy_bar, Jxx_bar - Jyy_bar))
+    tangent_theta = float(gradient_to_tangent_angle(gradient_theta))
+
+    return edge_strength, coherence, tangent_theta, gradient_theta
+
+
+def _passes_center_check(
+    weights: np.ndarray,
+    total_weight: float,
+    gradient_theta: float,
+    rows: np.ndarray,
+    cols: np.ndarray,
+    r0: int,
+    c0: int,
+    max_center_offset: int | None,
+) -> bool:
+    """Return True if the detected edge passes close enough to the patch center.
+
+    Args:
+        weights: Per-pixel weights.
+        total_weight: Sum of weights.
+        gradient_theta: Gradient direction in radians (normal to edge).
+        rows, cols: Pixel coordinate grids (same shape as weights).
+        r0, c0: Center pixel coordinates.
+        max_center_offset: Maximum allowed weighted distance from center, or None
+            to skip the check.
+
+    Returns:
+        True if edge passes the center check (or check is disabled).
+    """
+    if max_center_offset is None:
+        return True
+
+    nx = np.cos(gradient_theta)
+    ny = np.sin(gradient_theta)
+    dist_normal = nx * (cols - c0) + ny * (rows - r0)
+    d_center = np.sum(weights * dist_normal) / total_weight
+
+    return abs(d_center) <= max_center_offset
+
+
 def compute_weighted_structure_tensor_edge_features(
     patch: np.ndarray,
     edge_detection_config: EdgeDetectionConfig | None = None,
@@ -161,71 +296,29 @@ def compute_weighted_structure_tensor_edge_features(
     if edge_detection_config is None:
         edge_detection_config = EdgeDetectionConfig()
 
-    # Step 1: Compute gradients and local tensor components
-    blur_ksize = edge_detection_config.kernel_size
-    win_sigma = edge_detection_config.gaussian_sigma
-
     gray = cv2.cvtColor(patch, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+    Jxx, Jyy, Jxy, Ix, Iy = _compute_structure_tensor(gray, edge_detection_config)  # noqa: N806
 
-    Ix = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)  # noqa: N806
-    Iy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)  # noqa: N806
-
-    Jxx = Ix * Ix  # noqa: N806
-    Jyy = Iy * Iy  # noqa: N806
-    Jxy = Ix * Iy  # noqa: N806
-
-    Jxx = cv2.GaussianBlur(Jxx, (blur_ksize, blur_ksize), win_sigma)  # noqa: N806
-    Jyy = cv2.GaussianBlur(Jyy, (blur_ksize, blur_ksize), win_sigma)  # noqa: N806
-    Jxy = cv2.GaussianBlur(Jxy, (blur_ksize, blur_ksize), win_sigma)  # noqa: N806
-
-    # Step 2a: Center-weighted aggregation
-    r0, c0 = gray.shape[0] // 2, gray.shape[1] // 2
-    h, w = gray.shape
-
-    rows, cols = np.meshgrid(np.arange(h), np.arange(w), indexing="ij")
-    d_squared = (rows - r0) ** 2 + (cols - c0) ** 2
-    d = np.sqrt(d_squared)
-
-    # Step 2b: Radial and Gradient Strength Weighting
-    # Include gradient magnitude in weights so strong edges slightly off-center
-    # still contribute meaningfully rather than being suppressed by radial falloff.
-    w_r = np.exp(-(d_squared) / (2.0 * edge_detection_config.sigma_r**2))
-    w_r[d > edge_detection_config.radius] = 0.0
-    g = Ix**2 + Iy**2
-    weights = w_r * g
-
-    total_weight = np.sum(weights)
+    weights, total_weight, r0, c0, rows, cols = _compute_center_weights(
+        gray.shape, Ix, Iy, edge_detection_config
+    )
     if total_weight < 1e-12:
         return 0.0, 0.0, None
 
-    Jxx_bar = np.sum(weights * Jxx) / total_weight  # noqa: N806
-    Jyy_bar = np.sum(weights * Jyy) / total_weight  # noqa: N806
-    Jxy_bar = np.sum(weights * Jxy) / total_weight  # noqa: N806
+    edge_strength, coherence, tangent_theta, gradient_theta = _aggregate_tensor(
+        Jxx, Jyy, Jxy, weights, total_weight
+    )
 
-    # Step 3: Compute eigenvalues, edge strength, coherence, orientation
-    disc = np.sqrt((Jxx_bar - Jyy_bar) ** 2 + 4.0 * (Jxy_bar**2))
-    lam1 = 0.5 * (Jxx_bar + Jyy_bar + disc)
-    lam2 = 0.5 * (Jxx_bar + Jyy_bar - disc)
-
-    edge_strength = np.sqrt(max(lam1, 0.0))
-    coherence = (lam1 - lam2) / (lam1 + lam2 + 1e-12)
-
-    gradient_theta = 0.5 * np.arctan2(2.0 * Jxy_bar, Jxx_bar - Jyy_bar)
-    tangent_theta = gradient_to_tangent_angle(gradient_theta)
-
-    # Step 4: Check if edge passes near patch center
-    max_center_offset = edge_detection_config.max_center_offset
-    if max_center_offset is not None:
-        nx = np.cos(gradient_theta)
-        ny = np.sin(gradient_theta)
-
-        dr = rows - r0
-        dc = cols - c0
-
-        dist_normal = nx * dc + ny * dr
-        d_center = np.sum(weights * dist_normal) / total_weight
-
-        if abs(d_center) > max_center_offset:
-            return 0.0, 0.0, None
+    if not _passes_center_check(
+        weights,
+        total_weight,
+        gradient_theta,
+        rows,
+        cols,
+        r0,
+        c0,
+        edge_detection_config.max_center_offset,
+    ):
+        return 0.0, 0.0, None
 
     return float(edge_strength), float(coherence), float(tangent_theta)
