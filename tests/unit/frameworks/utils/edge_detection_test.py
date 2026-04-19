@@ -10,6 +10,7 @@
 import unittest
 
 import numpy as np
+import pytest
 import numpy.testing as npt
 from hypothesis import assume, example, given
 from hypothesis import strategies as st
@@ -84,6 +85,51 @@ positive_thresholds = st.floats(min_value=1e-8, max_value=10.0)
 
 STEP_EDGE_IMAGE = np.zeros((PATCH_SIZE, PATCH_SIZE), dtype=np.float32)
 STEP_EDGE_IMAGE[:, : PATCH_SIZE // 2] = 1.0
+
+
+def make_rgb_patch(size: int, pattern: str) -> np.ndarray:
+    """Generate a synthetic RGB uint8 patch.
+
+    Args:
+        size: Patch dimension (square).
+        pattern: One of "uniform", "vertical_edge", "horizontal_edge",
+            "diagonal_edge".
+
+    Returns:
+        uint8 RGB array of shape (size, size, 3).
+
+    Raises:
+        ValueError: If pattern is not recognized.
+    """
+    if pattern == "uniform":
+        return np.full((size, size, 3), 128, dtype=np.uint8)
+    if pattern == "vertical_edge":
+        patch = np.zeros((size, size, 3), dtype=np.uint8)
+        patch[:, size // 2 :] = 255
+        return patch
+    if pattern == "horizontal_edge":
+        patch = np.zeros((size, size, 3), dtype=np.uint8)
+        patch[size // 2 :, :] = 255
+        return patch
+    if pattern == "diagonal_edge":
+        patch = np.zeros((size, size, 3), dtype=np.uint8)
+        for r in range(size):
+            patch[r, r:] = 255
+        return patch
+    raise ValueError(f"Unknown pattern: {pattern}")
+
+
+VERTICAL_EDGE_PATCH = make_rgb_patch(PATCH_SIZE, "vertical_edge")
+HORIZONTAL_EDGE_PATCH = make_rgb_patch(PATCH_SIZE, "horizontal_edge")
+
+
+@st.composite
+def edge_patch(draw, patterns=None):
+    """Generate a canonical-pattern RGB patch at the fixed PATCH_SIZE."""
+    if patterns is None:
+        patterns = ["uniform", "vertical_edge", "horizontal_edge", "diagonal_edge"]
+    pattern = draw(st.sampled_from(patterns))
+    return make_rgb_patch(PATCH_SIZE, pattern)
 
 
 @st.composite
@@ -315,81 +361,64 @@ class StructureTensorTest(unittest.TestCase):
         npt.assert_allclose(t.edge_strength, np.sqrt(max(lambda_max, 0.0)), atol=1e-10)
 
 
-class ComputeWeightedStructureTensorEdgeFeaturesTest(unittest.TestCase):
-    @staticmethod
-    def _make_rgb_patch(size, pattern) -> np.ndarray:
-        """Generate synthetic RGB patches for testing.
-
-        Args:
-            size: Patch dimension (square).
-            pattern: One of "uniform", "vertical_edge", "horizontal_edge",
-                "diagonal_edge".
-
-        Returns:
-            uint8 RGB array of shape (size, size, 3).
-
-        Raises:
-            ValueError: If pattern is not recognized.
-        """
-        if pattern == "uniform":
-            return np.full((size, size, 3), 128, dtype=np.uint8)
-        if pattern == "vertical_edge":
-            patch = np.zeros((size, size, 3), dtype=np.uint8)
-            patch[:, size // 2 :] = 255
-            return patch
-        if pattern == "horizontal_edge":
-            patch = np.zeros((size, size, 3), dtype=np.uint8)
-            patch[size // 2 :, :] = 255
-            return patch
-        if pattern == "diagonal_edge":
-            patch = np.zeros((size, size, 3), dtype=np.uint8)
-            for r in range(size):
-                patch[r, r:] = 255
-            return patch
-        raise ValueError(f"Unknown pattern: {pattern}")
-
+class TestComputeEdgeFeatures:
     def test_uniform_patch_returns_zero_strength(self):
-        patch = self._make_rgb_patch(32, "uniform")
-        strength, _coherence, _theta = compute_edge_features(
-            patch
-        )
-        self.assertAlmostEqual(strength, 0.0)
+        patch = make_rgb_patch(PATCH_SIZE, "uniform")
+        strength, coherence, orientation = compute_edge_features(patch)
+        assert strength == pytest.approx(0.0)
+        assert coherence == pytest.approx(0.0)
+        assert orientation is None
 
     def test_vertical_edge_detected(self):
-        patch = self._make_rgb_patch(32, "vertical_edge")
-        strength, coherence, _ = compute_edge_features(patch)
-        self.assertGreater(strength, 0.0)
-        self.assertGreater(coherence, 0.0)
+        strength, coherence, _ = compute_edge_features(VERTICAL_EDGE_PATCH)
+        assert strength > 0.0
+        assert coherence > 0.0
 
     def test_vertical_edge_orientation(self):
-        patch = self._make_rgb_patch(32, "vertical_edge")
-        _, _, theta = compute_edge_features(patch)
+        _, _, theta = compute_edge_features(VERTICAL_EDGE_PATCH)
         # Vertical edge tangent should be near pi/2 or 3*pi/2
         angle_to_vertical = min(abs(theta - np.pi / 2), abs(theta - 3 * np.pi / 2))
-        self.assertLess(angle_to_vertical, 0.3)
+        assert angle_to_vertical < 0.3
 
     def test_horizontal_edge_orientation(self):
-        patch = self._make_rgb_patch(32, "horizontal_edge")
-        _, _, theta = compute_edge_features(patch)
+        _, _, theta = compute_edge_features(HORIZONTAL_EDGE_PATCH)
         # Horizontal edge tangent should be near 0 or pi
         angle_to_horizontal = min(abs(theta), abs(theta - np.pi))
-        self.assertLess(angle_to_horizontal, 0.3)
+        assert angle_to_horizontal < 0.3
+
+    def test_diagonal_edge_detected(self):
+        patch = make_rgb_patch(PATCH_SIZE, "diagonal_edge")
+        strength, coherence, orientation = compute_edge_features(patch)
+        assert strength > 0.0
+        assert coherence > 0.0
+        assert orientation is not None
 
     def test_default_params_used_when_none(self):
-        patch = self._make_rgb_patch(32, "vertical_edge")
-        compute_edge_features(patch, edge_detection_config=None)
+        compute_edge_features(VERTICAL_EDGE_PATCH, edge_detection_config=None)
 
     def test_center_offset_rejects_off_center_edge(self):
         # Edge at right boundary, not at center
-        patch = np.full((32, 32, 3), 0, dtype=np.uint8)
-        patch[:, 28:] = 255
+        patch = np.zeros((PATCH_SIZE, PATCH_SIZE, 3), dtype=np.uint8)
+        patch[:, PATCH_SIZE - 4 :] = 255
         config = EdgeDetectionConfig(max_center_offset=1)
-        strength, coherence, theta = compute_edge_features(
-            patch, config
-        )
-        self.assertAlmostEqual(strength, 0.0)
-        self.assertAlmostEqual(coherence, 0.0)
-        self.assertIsNone(theta)
+        strength, coherence, theta = compute_edge_features(patch, config)
+        assert strength == pytest.approx(0.0)
+        assert coherence == pytest.approx(0.0)
+        assert theta is None
+
+    @given(patch=edge_patch())
+    def test_output_ranges_valid(self, patch):
+        strength, coherence, orientation = compute_edge_features(patch)
+        assert strength >= 0.0
+        assert 0.0 <= coherence <= 1.0
+        assert orientation is None or 0.0 <= orientation <= np.pi
+
+    @given(patch=edge_patch())
+    def test_zero_strength_implies_no_edge_fields(self, patch):
+        strength, coherence, orientation = compute_edge_features(patch)
+        if strength == 0.0:
+            assert coherence == 0.0
+            assert orientation is None
 
 
 class ComputeCenterWeightsTest(unittest.TestCase):
