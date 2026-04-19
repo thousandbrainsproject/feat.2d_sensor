@@ -178,7 +178,7 @@ def _compute_sobel_gradients(
     return Ix, Iy
 
 
-def _compute_structure_tensor_field(
+def _compute_per_pixel_structure_tensors(
     Ix: np.ndarray,  # noqa: N803
     Iy: np.ndarray,  # noqa: N803
     config: EdgeDetectionConfig,
@@ -205,12 +205,12 @@ def _compute_structure_tensor_field(
     Jxy = cv2.GaussianBlur(Jxy, (ksize, ksize), sigma)  # noqa: N806  # (h, w)
 
     h, w = Jxx.shape
-    field = np.empty((h, w, 2, 2), dtype=np.float32)
-    field[..., 0, 0] = Jxx
-    field[..., 1, 1] = Jyy
-    field[..., 0, 1] = Jxy
-    field[..., 1, 0] = Jxy
-    return field
+    tensor_per_pixel = np.empty((h, w, 2, 2), dtype=np.float32)
+    tensor_per_pixel[..., 0, 0] = Jxx
+    tensor_per_pixel[..., 1, 1] = Jyy
+    tensor_per_pixel[..., 0, 1] = Jxy
+    tensor_per_pixel[..., 1, 0] = Jxy
+    return tensor_per_pixel
 
 
 def _compute_center_weights(
@@ -218,7 +218,7 @@ def _compute_center_weights(
     Ix: np.ndarray,  # noqa: N803
     Iy: np.ndarray,  # noqa: N803
     config: EdgeDetectionConfig,
-) -> tuple[np.ndarray, float, int, int, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.floating]:
     """Build radial + gradient-strength weight map centered on the patch.
 
     Weights combine a Gaussian radial falloff (suppressing far-from-center pixels)
@@ -231,8 +231,7 @@ def _compute_center_weights(
         config: Edge detection configuration.
 
     Returns:
-        Tuple of (weights, total_weight, r0, c0, rows, cols).
-        rows/cols and r0/c0 are returned for reuse in the center-offset check.
+        Tuple of (weights, total_weight).
     """
     h, w = shape
     r0, c0 = h // 2, w // 2
@@ -245,18 +244,19 @@ def _compute_center_weights(
     w_r[d > config.radius] = 0.0
     weights = w_r * (Ix**2 + Iy**2)
 
-    return weights, float(np.sum(weights)), r0, c0, rows, cols
+    total_weight = np.sum(weights)
+    return weights, total_weight
 
 
 def _aggregate_tensor(
-    tensor_field: np.ndarray,
+    tensor_per_pixel: np.ndarray,
     weights: np.ndarray,
     total_weight: float,
 ) -> StructureTensor:
     """Reduce a per-pixel structure tensor field to a single representative tensor.
 
     Args:
-        tensor_field: Per-pixel structure tensors, shape (h, w, 2, 2).
+        tensor_per_pixel: Per-pixel structure tensors, shape (h, w, 2, 2).
         weights: Per-pixel weights, shape (h, w).
         total_weight: Sum of weights (must be > 0).
 
@@ -264,7 +264,7 @@ def _aggregate_tensor(
         StructureTensor representing the weighted aggregate over the patch.
     """
     w = weights[..., np.newaxis, np.newaxis]
-    aggregated = np.sum(w * tensor_field, axis=(0, 1)) / total_weight
+    aggregated = np.sum(w * tensor_per_pixel, axis=(0, 1)) / total_weight
     return StructureTensor(
         Jxx=float(aggregated[0, 0]),
         Jyy=float(aggregated[1, 1]),
@@ -274,12 +274,8 @@ def _aggregate_tensor(
 
 def _passes_center_check(
     weights: np.ndarray,
-    total_weight: float,
+    total_weight: np.floating,
     gradient_theta: float,
-    rows: np.ndarray,
-    cols: np.ndarray,
-    r0: int,
-    c0: int,
     max_center_offset: int | None,
 ) -> bool:
     """Return True if the detected edge passes close enough to the patch center.
@@ -288,8 +284,6 @@ def _passes_center_check(
         weights: Per-pixel weights.
         total_weight: Sum of weights.
         gradient_theta: Gradient direction in radians (normal to edge).
-        rows, cols: Pixel coordinate grids (same shape as weights).
-        r0, c0: Center pixel coordinates.
         max_center_offset: Maximum allowed weighted distance from center, or None
             to skip the check.
 
@@ -298,6 +292,10 @@ def _passes_center_check(
     """
     if max_center_offset is None:
         return True
+
+    h, w = weights.shape
+    r0, c0 = h // 2, w // 2
+    rows, cols = np.meshgrid(np.arange(h), np.arange(w), indexing="ij")
 
     nx = np.cos(gradient_theta)
     ny = np.sin(gradient_theta)
@@ -346,24 +344,20 @@ def compute_weighted_structure_tensor_edge_features(
 
     gray = cv2.cvtColor(patch, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
     Ix, Iy = _compute_sobel_gradients(gray)  # noqa: N806
-    tensor_field = _compute_structure_tensor_field(Ix, Iy, edge_detection_config)
+    tensor_per_pixel = _compute_per_pixel_structure_tensors(Ix, Iy, edge_detection_config)
 
-    weights, total_weight, r0, c0, rows, cols = _compute_center_weights(
+    weights, total_weight = _compute_center_weights(
         gray.shape, Ix, Iy, edge_detection_config
     )
     if total_weight < 1e-12:
         return 0.0, 0.0, None
 
-    aggregated = _aggregate_tensor(tensor_field, weights, total_weight)
+    aggregated = _aggregate_tensor(tensor_per_pixel, weights, total_weight)
 
     if not _passes_center_check(
         weights,
         total_weight,
         aggregated.gradient_theta,
-        rows,
-        cols,
-        r0,
-        c0,
         edge_detection_config.max_center_offset,
     ):
         return 0.0, 0.0, None
