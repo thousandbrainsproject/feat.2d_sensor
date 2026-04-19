@@ -194,15 +194,15 @@ def _compute_structure_tensor_field(
         Array of shape (h, w, 2, 2) where each entry is the Gaussian-smoothed
         2x2 structure tensor [[Jxx, Jxy], [Jxy, Jyy]] at that pixel.
     """
-    Jxx = Ix * Ix  # noqa: N806
-    Jyy = Iy * Iy  # noqa: N806
-    Jxy = Ix * Iy  # noqa: N806
+    Jxx = Ix * Ix  # noqa: N806  # (h, w)
+    Jyy = Iy * Iy  # noqa: N806  # (h, w)
+    Jxy = Ix * Iy  # noqa: N806  # (h, w)
 
     ksize = config.kernel_size
     sigma = config.gaussian_sigma
-    Jxx = cv2.GaussianBlur(Jxx, (ksize, ksize), sigma)  # noqa: N806
-    Jyy = cv2.GaussianBlur(Jyy, (ksize, ksize), sigma)  # noqa: N806
-    Jxy = cv2.GaussianBlur(Jxy, (ksize, ksize), sigma)  # noqa: N806
+    Jxx = cv2.GaussianBlur(Jxx, (ksize, ksize), sigma)  # noqa: N806  # (h, w)
+    Jyy = cv2.GaussianBlur(Jyy, (ksize, ksize), sigma)  # noqa: N806  # (h, w)
+    Jxy = cv2.GaussianBlur(Jxy, (ksize, ksize), sigma)  # noqa: N806  # (h, w)
 
     h, w = Jxx.shape
     field = np.empty((h, w, 2, 2), dtype=np.float32)
