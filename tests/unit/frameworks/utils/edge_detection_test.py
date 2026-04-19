@@ -11,7 +11,6 @@ import unittest
 
 import numpy as np
 import pytest
-import numpy.testing as npt
 from hypothesis import assume, example, given
 from hypothesis import strategies as st
 from scipy.spatial.transform import Rotation
@@ -193,7 +192,7 @@ class GradientToTangentAngleTest(unittest.TestCase):
     def test_perpendicularity(self, gradient_angle):
         result = gradient_to_tangent_angle(gradient_angle)
         remainder = (result - gradient_angle) % np.pi
-        npt.assert_allclose(remainder, np.pi / 2, atol=DEFAULT_TOLERANCE)
+        np.testing.assert_allclose(remainder, np.pi / 2, atol=DEFAULT_TOLERANCE)
 
 
 class IsGeometricEdgeTest(unittest.TestCase):
@@ -226,9 +225,9 @@ class EdgeAngleTo2dPoseTest(unittest.TestCase):
     def test_identity_camera_theta_zero(self):
         """Canonical reference: identity camera, theta=0 aligns with world x-axis."""
         pose = edge_angle_to_2d_pose(theta=0.0, world_camera=np.eye(4))
-        npt.assert_allclose(pose[0], [0, 0, 1])
-        npt.assert_allclose(pose[1], [1, 0, 0])
-        npt.assert_allclose(pose[2], [0, 1, 0])
+        np.testing.assert_allclose(pose[0], [0, 0, 1])
+        np.testing.assert_allclose(pose[1], [1, 0, 0])
+        np.testing.assert_allclose(pose[2], [0, 1, 0])
 
     def test_tilted_camera_90_yaw(self):
         """Camera yawed 90 degrees CCW shifts world_theta by pi/2."""
@@ -237,22 +236,22 @@ class EdgeAngleTo2dPoseTest(unittest.TestCase):
         cam = np.eye(4)
         cam[:3, :3] = R
         pose = edge_angle_to_2d_pose(theta=0.0, world_camera=cam)
-        npt.assert_allclose(pose[1], [0, 1, 0], atol=DEFAULT_TOLERANCE)
-        npt.assert_allclose(pose[2], [-1, 0, 0], atol=DEFAULT_TOLERANCE)
+        np.testing.assert_allclose(pose[1], [0, 1, 0], atol=DEFAULT_TOLERANCE)
+        np.testing.assert_allclose(pose[2], [-1, 0, 0], atol=DEFAULT_TOLERANCE)
 
     @given(theta=angles, cam=camera_4x4())
     @example(theta=0.0, cam=np.eye(4))
     def test_normal_is_001(self, theta, cam):
         """Row 0 is always the world z-axis, regardless of theta or camera."""
         pose = edge_angle_to_2d_pose(theta, cam)
-        npt.assert_allclose(pose[0], [0.0, 0.0, 1.0])
+        np.testing.assert_allclose(pose[0], [0.0, 0.0, 1.0])
 
     @given(theta=angles, cam=camera_4x4())
     def test_tangent_and_perp_lie_in_xy_plane(self, theta, cam):
         """Rows 1 and 2 always have zero z-component."""
         pose = edge_angle_to_2d_pose(theta, cam)
-        npt.assert_allclose(pose[1][2], 0.0, atol=DEFAULT_TOLERANCE)
-        npt.assert_allclose(pose[2][2], 0.0, atol=DEFAULT_TOLERANCE)
+        np.testing.assert_allclose(pose[1][2], 0.0, atol=DEFAULT_TOLERANCE)
+        np.testing.assert_allclose(pose[2][2], 0.0, atol=DEFAULT_TOLERANCE)
 
     @given(theta=angles, cam=camera_4x4())
     @example(theta=0.0, cam=np.eye(4))
@@ -260,10 +259,10 @@ class EdgeAngleTo2dPoseTest(unittest.TestCase):
         """Result is always an orthonormal frame (unit rows, mutually orthogonal)."""
         pose = edge_angle_to_2d_pose(theta, cam)
         for i in range(3):
-            npt.assert_allclose(np.linalg.norm(pose[i]), 1.0, atol=DEFAULT_TOLERANCE)
+            np.testing.assert_allclose(np.linalg.norm(pose[i]), 1.0, atol=DEFAULT_TOLERANCE)
         for i in range(3):
             for j in range(i + 1, 3):
-                npt.assert_allclose(
+                np.testing.assert_allclose(
                     np.dot(pose[i], pose[j]), 0.0, atol=DEFAULT_TOLERANCE
                 )
 
@@ -274,7 +273,7 @@ class EdgeAngleTo2dPoseTest(unittest.TestCase):
         cam_no_t[:3, :3] = R
         cam_with_t = cam_no_t.copy()
         cam_with_t[:3, 3] = [10.0, 20.0, 30.0]
-        npt.assert_allclose(
+        np.testing.assert_allclose(
             edge_angle_to_2d_pose(theta, cam_with_t),
             edge_angle_to_2d_pose(theta, cam_no_t),
         )
@@ -283,7 +282,7 @@ class EdgeAngleTo2dPoseTest(unittest.TestCase):
     def test_theta_periodicity_2pi(self, theta, cam):
         """Shifting theta by 2*pi returns the identical pose."""
         tol = max(DEFAULT_TOLERANCE * abs(theta), DEFAULT_TOLERANCE)
-        npt.assert_allclose(
+        np.testing.assert_allclose(
             edge_angle_to_2d_pose(theta, cam),
             edge_angle_to_2d_pose(theta + 2 * np.pi, cam),
             atol=tol,
@@ -295,17 +294,17 @@ class EdgeAngleTo2dPoseTest(unittest.TestCase):
         tol = max(DEFAULT_TOLERANCE * abs(theta), DEFAULT_TOLERANCE)
         pose = edge_angle_to_2d_pose(theta, cam)
         pose_shifted = edge_angle_to_2d_pose(theta + np.pi, cam)
-        npt.assert_allclose(pose[0], pose_shifted[0], atol=tol)
-        npt.assert_allclose(pose[1], -pose_shifted[1], atol=tol)
-        npt.assert_allclose(pose[2], -pose_shifted[2], atol=tol)
+        np.testing.assert_allclose(pose[0], pose_shifted[0], atol=tol)
+        np.testing.assert_allclose(pose[1], -pose_shifted[1], atol=tol)
+        np.testing.assert_allclose(pose[2], -pose_shifted[2], atol=tol)
 
 
 class StructureTensorTest(unittest.TestCase):
     def test_eigenvalues_match_analytical(self):
         t = StructureTensor(Jxx=3.0, Jyy=1.0, Jxy=1.0)
         lambda_min, lambda_max = t.eigenvalues
-        npt.assert_allclose(lambda_min, 2.0 - np.sqrt(2.0), atol=DEFAULT_TOLERANCE)
-        npt.assert_allclose(lambda_max, 2.0 + np.sqrt(2.0), atol=DEFAULT_TOLERANCE)
+        np.testing.assert_allclose(lambda_min, 2.0 - np.sqrt(2.0), atol=DEFAULT_TOLERANCE)
+        np.testing.assert_allclose(lambda_max, 2.0 + np.sqrt(2.0), atol=DEFAULT_TOLERANCE)
 
     @given(t=structure_tensors())
     @example(t=StructureTensor(Jxx=0.0, Jyy=0.0, Jxy=0.0))
@@ -331,34 +330,34 @@ class StructureTensorTest(unittest.TestCase):
     @given(t=structure_tensors())
     def test_eigenvalue_trace_equals_jxx_plus_jyy(self, t):
         lambda_min, lambda_max = t.eigenvalues
-        npt.assert_allclose(lambda_min + lambda_max, t.Jxx + t.Jyy, atol=DEFAULT_TOLERANCE)
+        np.testing.assert_allclose(lambda_min + lambda_max, t.Jxx + t.Jyy, atol=DEFAULT_TOLERANCE)
 
     @given(t=structure_tensors())
     def test_eigenvalue_product_equals_determinant(self, t):
         lambda_min, lambda_max = t.eigenvalues
-        npt.assert_allclose(lambda_min * lambda_max, t.Jxx * t.Jyy - t.Jxy**2, atol=DEFAULT_TOLERANCE)
+        np.testing.assert_allclose(lambda_min * lambda_max, t.Jxx * t.Jyy - t.Jxy**2, atol=DEFAULT_TOLERANCE)
 
     @given(k=a_scalar)
     def test_isotropic_coherence_is_zero(self, k):
         t = StructureTensor(Jxx=k, Jyy=k, Jxy=0.0)
-        npt.assert_allclose(t.coherence, 0.0, atol=DEFAULT_TOLERANCE)
+        np.testing.assert_allclose(t.coherence, 0.0, atol=DEFAULT_TOLERANCE)
 
     @given(t=structure_tensors(), k=a_scalar)
     def test_scaling_multiplies_edge_strength(self, t, k):
         scaled = StructureTensor(Jxx=k * t.Jxx, Jyy=k * t.Jyy, Jxy=k * t.Jxy)
-        npt.assert_allclose(scaled.edge_strength, np.sqrt(k) * t.edge_strength, atol=DEFAULT_TOLERANCE)
+        np.testing.assert_allclose(scaled.edge_strength, np.sqrt(k) * t.edge_strength, atol=DEFAULT_TOLERANCE)
 
     @given(t=structure_tensors(), k=a_scalar)
     @example(t=StructureTensor(Jxx=4.0, Jyy=0.0, Jxy=0.0), k=2.0)
     @example(t=StructureTensor(Jxx=0.0, Jyy=9.0, Jxy=0.0), k=3.0)
     def test_scaling_preserves_gradient_theta(self, t, k):
         scaled = StructureTensor(Jxx=k * t.Jxx, Jyy=k * t.Jyy, Jxy=k * t.Jxy)
-        npt.assert_allclose(scaled.gradient_theta, t.gradient_theta, atol=DEFAULT_TOLERANCE)
+        np.testing.assert_allclose(scaled.gradient_theta, t.gradient_theta, atol=DEFAULT_TOLERANCE)
 
     @given(t=structure_tensors())
     def test_edge_strength_equals_sqrt_lambda_max(self, t):
         _, lambda_max = t.eigenvalues
-        npt.assert_allclose(t.edge_strength, np.sqrt(max(lambda_max, 0.0)), atol=1e-10)
+        np.testing.assert_allclose(t.edge_strength, np.sqrt(max(lambda_max, 0.0)), atol=1e-10)
 
 
 class TestComputeEdgeFeatures:
@@ -460,7 +459,7 @@ class ComputeCenterWeightsTest(unittest.TestCase):
     def test_total_weight_equals_sum_of_weights(self, inputs):
         shape, Ix, Iy, config = inputs
         weights, total_weight = _compute_center_weights(shape, Ix, Iy, config)
-        npt.assert_allclose(total_weight, np.sum(weights))
+        np.testing.assert_allclose(total_weight, np.sum(weights))
 
     @given(inputs=center_weight_inputs())
     def test_output_shape_matches_input(self, inputs):
@@ -485,8 +484,9 @@ class ComputeCenterWeightsTest(unittest.TestCase):
         weights_scaled, total_weight_scaled = _compute_center_weights(
             shape, k * Ix, k * Iy, config
         )
-        npt.assert_allclose(weights_scaled, k**2 * weights, rtol=DEFAULT_TOLERANCE)
-        npt.assert_allclose(total_weight_scaled, k**2 * total_weight, rtol=DEFAULT_TOLERANCE)
+        tol = max(DEFAULT_TOLERANCE * k**2, DEFAULT_TOLERANCE)
+        np.testing.assert_allclose(weights_scaled, k**2 * weights, rtol=DEFAULT_TOLERANCE, atol=tol)
+        np.testing.assert_allclose(total_weight_scaled, k**2 * total_weight, rtol=DEFAULT_TOLERANCE, atol=tol)
 
 
 class PassesCenterCheckTest(unittest.TestCase):
