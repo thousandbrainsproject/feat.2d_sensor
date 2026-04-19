@@ -15,15 +15,31 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import numpy.testing as nptest
+import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from tbp.monty.cmp import Message
 from tbp.monty.frameworks.models.two_d_sensor_module import TwoDSensorModule
 from tbp.monty.frameworks.utils.edge_detection import EdgeDetectionConfig
+from tbp.monty.math import DEFAULT_TOLERANCE
 
 MODULE_PATH = "tbp.monty.frameworks.models.two_d_sensor_module"
 
+# ---------------------------------------------------------------------------
+# Hypothesis strategies
+# ---------------------------------------------------------------------------
 
-def make_state(**overrides):
+a_3d_location = st.lists(
+    st.floats(-1e6, 1e6, allow_nan=False, allow_infinity=False),
+    min_size=3,
+    max_size=3,
+).map(np.array)
+
+_FLAT_POSE = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], dtype=float)
+
+
+def make_message(**overrides):
     """Create a Message with sensible defaults.
 
     use_state=False by default to skip _check_all_attributes() validation.
@@ -45,6 +61,7 @@ def make_state(**overrides):
     )
     defaults.update(overrides)
     return Message(**defaults)
+
 
 
 def make_module(**overrides):
@@ -70,20 +87,18 @@ class TestInit(unittest.TestCase):
     def test_default_edge_config_when_none(self):
         sm = make_module(edge_detection_config=None)
         expected = EdgeDetectionConfig()
-        self.assertEqual(sm.edge_detection_config, expected)
+        assert sm.edge_detection_config == expected
 
     def test_custom_edge_config_stored(self):
         config = EdgeDetectionConfig(strength_threshold=0.5)
         sm = make_module(edge_detection_config=config)
-        self.assertIs(sm.edge_detection_config, config)
+        assert sm.edge_detection_config is config
 
     def test_warns_missing_edge_features(self):
         logger = logging.getLogger(MODULE_PATH)
         with self.assertLogs(logger, level="WARNING") as cm:
             make_module(features=["on_object"])
-        self.assertTrue(
-            any("edge_strength" in msg or "coherence" in msg for msg in cm.output)
-        )
+        assert any("edge_strength" in msg or "coherence" in msg for msg in cm.output)
 
     def test_no_warning_when_edge_features_present(self):
         logger = logging.getLogger(MODULE_PATH)
@@ -91,12 +106,12 @@ class TestInit(unittest.TestCase):
             logger.debug("sentinel")
             make_module(features=["edge_strength", "coherence", "on_object"])
         warnings = [m for m in cm.output if "WARNING" in m]
-        self.assertEqual(warnings, [])
+        assert warnings == []
 
     def test_initial_internal_state(self):
         sm = make_module()
-        self.assertIsNone(sm._previous_3d_location)
-        self.assertIsNone(sm._tangent_frame)
+        assert sm._previous_3d_location is None
+        assert sm._tangent_frame is None
         nptest.assert_array_equal(sm._previous_2d_location, np.zeros(2))
 
 
@@ -115,15 +130,15 @@ class TestExtract2dEdge(unittest.TestCase):
     def _base_state(self, **morph_overrides):
         morph = {"pose_vectors": np.eye(3), "pose_fully_defined": False}
         morph.update(morph_overrides)
-        return make_state(morphological_features=morph)
+        return make_message(morphological_features=morph)
 
     def test_no_pose_vectors_returns_unchanged(self):
-        state = make_state(
+        state = make_message(
             morphological_features={"pose_fully_defined": False},
             use_state=False,
         )
         result = self.sm._extract_2d_edge(state, self.rgba, self.world_camera)
-        self.assertIs(result, state)
+        assert result is state
 
     @patch(f"{MODULE_PATH}.is_geometric_edge", return_value=True)
     @patch(
@@ -135,7 +150,7 @@ class TestExtract2dEdge(unittest.TestCase):
         result = self.sm._extract_2d_edge(
             state, self.rgba, self.world_camera, depth_image=self.depth
         )
-        self.assertIs(result, state)
+        assert result is state
 
     @patch(
         f"{MODULE_PATH}.compute_edge_features",
@@ -144,8 +159,8 @@ class TestExtract2dEdge(unittest.TestCase):
     def test_below_strength_threshold(self, _mock_compute):  # noqa: PT019
         state = self._base_state()
         result = self.sm._extract_2d_edge(state, self.rgba, self.world_camera)
-        self.assertFalse(state.morphological_features["pose_fully_defined"])
-        self.assertIs(result, state)
+        assert not state.morphological_features["pose_fully_defined"]
+        assert result is state
 
     @patch(
         f"{MODULE_PATH}.compute_edge_features",
@@ -154,8 +169,8 @@ class TestExtract2dEdge(unittest.TestCase):
     def test_below_coherence_threshold(self, _mock_compute):  # noqa: PT019
         state = self._base_state()
         result = self.sm._extract_2d_edge(state, self.rgba, self.world_camera)
-        self.assertFalse(state.morphological_features["pose_fully_defined"])
-        self.assertIs(result, state)
+        assert not state.morphological_features["pose_fully_defined"]
+        assert result is state
 
     @patch(
         f"{MODULE_PATH}.edge_angle_to_2d_pose",
@@ -171,7 +186,7 @@ class TestExtract2dEdge(unittest.TestCase):
         result = self.sm._extract_2d_edge(
             state, self.rgba, self.world_camera, depth_image=self.depth
         )
-        self.assertTrue(result.morphological_features["pose_fully_defined"])
+        assert result.morphological_features["pose_fully_defined"]
         pose = result.morphological_features["pose_vectors"]
         # Row 0: normal always [0,0,1] in 2D plane
         nptest.assert_allclose(pose[0], [0, 0, 1], atol=1e-7)
@@ -179,8 +194,8 @@ class TestExtract2dEdge(unittest.TestCase):
         nptest.assert_allclose(pose[1], [0, 1, 0], atol=1e-7)
         # Row 2: edge perp in xy-plane
         nptest.assert_allclose(pose[2], [-1, 0, 0], atol=1e-7)
-        self.assertAlmostEqual(result.non_morphological_features["edge_strength"], 0.5)
-        self.assertAlmostEqual(result.non_morphological_features["coherence"], 0.8)
+        assert result.non_morphological_features["edge_strength"] == pytest.approx(0.5)
+        assert result.non_morphological_features["coherence"] == pytest.approx(0.8)
 
     @patch(f"{MODULE_PATH}.edge_angle_to_2d_pose", return_value=np.eye(3))
     @patch(f"{MODULE_PATH}.is_geometric_edge", return_value=False)
@@ -195,7 +210,7 @@ class TestExtract2dEdge(unittest.TestCase):
             state, rgba_4ch, self.world_camera, depth_image=self.depth
         )
         patch_arg = mock_compute.call_args[0][0]
-        self.assertEqual(patch_arg.shape[2], 3)
+        assert patch_arg.shape[2] == 3
 
     @patch(f"{MODULE_PATH}.is_geometric_edge")
     @patch(f"{MODULE_PATH}.edge_angle_to_2d_pose", return_value=np.eye(3))
@@ -220,7 +235,7 @@ class TestExtract2dEdge(unittest.TestCase):
             mock_pose.return_value = np.array([[0, 0, 1], [s2, s2, 0], [-s2, s2, 0]])
             result = self.sm._extract_2d_edge(state, self.rgba, self.world_camera)
             mock_pose.assert_called_once_with(np.pi / 4, self.world_camera)
-        self.assertTrue(result.morphological_features["pose_fully_defined"])
+        assert result.morphological_features["pose_fully_defined"]
         nptest.assert_allclose(
             result.morphological_features["pose_vectors"][0], [0, 0, 1], atol=1e-7
         )
@@ -234,8 +249,8 @@ class TestExtract2dEdge(unittest.TestCase):
         sm = make_module(features=["coherence", "on_object"])
         state = self._base_state()
         result = sm._extract_2d_edge(state, self.rgba, self.world_camera)
-        self.assertNotIn("edge_strength", result.non_morphological_features)
-        self.assertIn("coherence", result.non_morphological_features)
+        assert "edge_strength" not in result.non_morphological_features
+        assert "coherence" in result.non_morphological_features
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +270,7 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
         return frame
 
     def test_off_object_zero_displacement(self):
-        state = make_state(
+        state = make_message(
             morphological_features={
                 "pose_vectors": np.eye(3),
                 "pose_fully_defined": False,
@@ -266,14 +281,14 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
         nptest.assert_array_equal(result.displacement["displacement"], np.zeros(3))
 
     def test_first_obs_initializes_from_world_xy(self):
-        state = make_state(location=np.array([4.0, 5.0, 6.0]))
+        state = make_message(location=np.array([4.0, 5.0, 6.0]))
         self.sm._previous_3d_location = None
         sn = state.get_surface_normal()
 
         result = self.sm._update_2d_position_and_displacement(state, None, sn)
         nptest.assert_array_equal(result.location, [4.0, 5.0, 0.0])
         nptest.assert_array_equal(self.sm._previous_2d_location, [4.0, 5.0])
-        self.assertIsNotNone(self.sm._tangent_frame)
+        assert self.sm._tangent_frame is not None
 
     def test_zero_tangent_displacement(self):
         loc = np.array([1.0, 2.0, 3.0])
@@ -281,7 +296,7 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
         self.sm._previous_2d_location = np.array([1.0, 2.0])
         self.sm._tangent_frame = self._make_mock_tangent_frame()
 
-        state = make_state(location=loc.copy())
+        state = make_message(location=loc.copy())
         sn = state.get_surface_normal()
         result = self.sm._update_2d_position_and_displacement(state, None, sn)
         nptest.assert_array_equal(result.displacement["displacement"], np.zeros(3))
@@ -293,7 +308,7 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
         self.sm._tangent_frame = self._make_mock_tangent_frame()
 
         pose = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], dtype=float)
-        state = make_state(
+        state = make_message(
             location=np.array([0.3, 0.4, 0.0]),
             morphological_features={
                 "pose_vectors": pose,
@@ -319,7 +334,7 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
 
         pose = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], dtype=float)
         curvature_pv = pose.copy()
-        state = make_state(
+        state = make_message(
             location=np.array([0.3, 0.4, 0.0]),
             morphological_features={
                 "pose_vectors": pose,
@@ -342,7 +357,7 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
         self.sm._tangent_frame = self._make_mock_tangent_frame()
 
         pose = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], dtype=float)
-        state1 = make_state(
+        state1 = make_message(
             location=np.array([1.0, 0.0, 0.0]),
             morphological_features={
                 "pose_vectors": pose.copy(),
@@ -352,7 +367,7 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
         sn1 = state1.get_surface_normal()
         self.sm._update_2d_position_and_displacement(state1, None, sn1)
 
-        state2 = make_state(
+        state2 = make_message(
             location=np.array([1.0, 2.0, 0.0]),
             morphological_features={
                 "pose_vectors": pose.copy(),
@@ -370,7 +385,7 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
         self.sm._tangent_frame = self._make_mock_tangent_frame()
 
         pose = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], dtype=float)
-        state = make_state(
+        state = make_message(
             location=np.array([1.0, 2.0, 3.0]),
             morphological_features={
                 "pose_vectors": pose,
@@ -379,8 +394,63 @@ class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
         )
         sn = state.get_surface_normal()
         result = self.sm._update_2d_position_and_displacement(state, None, sn)
-        self.assertEqual(result.location[2], 0.0)
+        assert result.location[2] == 0.0
+
+    @given(loc=a_3d_location)
+    def test_z_always_zero_property(self, loc):
+        self.sm._previous_3d_location = np.zeros(3)
+        self.sm._previous_2d_location = np.zeros(2)
+        self.sm._tangent_frame = self._make_mock_tangent_frame()
+        state = make_message(
+            location=loc,
+            morphological_features={"pose_vectors": _FLAT_POSE, "pose_fully_defined": False},
+        )
+        result = self.sm._update_2d_position_and_displacement(
+            state, None, state.get_surface_normal()
+        )
+        assert result.location[2] == 0.0
+
+    @given(loc=a_3d_location)
+    def test_zero_displacement_when_stationary_property(self, loc):
+        self.sm._previous_3d_location = loc.copy()
+        self.sm._previous_2d_location = loc[:2].copy()
+        self.sm._tangent_frame = self._make_mock_tangent_frame()
+        state = make_message(
+            location=loc.copy(),
+            morphological_features={"pose_vectors": _FLAT_POSE, "pose_fully_defined": False},
+        )
+        result = self.sm._update_2d_position_and_displacement(
+            state, None, state.get_surface_normal()
+        )
+        nptest.assert_array_equal(result.displacement["displacement"], np.zeros(3))
 
 
-if __name__ == "__main__":
-    unittest.main()
+# ---------------------------------------------------------------------------
+# TestPreEpisode
+# ---------------------------------------------------------------------------
+
+
+class TestPreEpisode(unittest.TestCase):
+    def setUp(self):
+        self.sm = make_module()
+
+    def test_resets_state_tracking(self):
+        self.sm._previous_3d_location = np.array([1.0, 2.0, 3.0])
+        self.sm._tangent_frame = object()
+        self.sm._previous_2d_location = np.array([1.0, 2.0])
+        self.sm.pre_episode()
+        assert self.sm._previous_3d_location is None
+        assert self.sm._tangent_frame is None
+        nptest.assert_array_equal(self.sm._previous_2d_location, np.zeros(2))
+
+    def test_clears_observations(self):
+        self.sm.processed_obs = [{"x": 1}]
+        self.sm.states = [object()]
+        self.sm.pre_episode()
+        assert self.sm.processed_obs == []
+        assert self.sm.states == []
+
+    def test_clears_exploring_flag(self):
+        self.sm.is_exploring = True
+        self.sm.pre_episode()
+        assert not self.sm.is_exploring
