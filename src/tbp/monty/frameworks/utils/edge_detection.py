@@ -158,7 +158,7 @@ class StructureTensor:
 
     @property
     def edge_orientation(self) -> float:
-        """Edge orientation angle in [0, pi) radians."""
+        """Edge orientation angle in [0, pi] radians."""
         return gradient_to_tangent_angle(self.gradient_theta)
 
 

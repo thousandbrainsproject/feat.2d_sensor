@@ -17,6 +17,7 @@ from scipy.spatial.transform import Rotation
 
 from tbp.monty.frameworks.utils.edge_detection import (
     EdgeDetectionConfig,
+    StructureTensor,
     compute_weighted_structure_tensor_edge_features,
     edge_angle_to_2d_pose,
     gradient_to_tangent_angle,
@@ -25,6 +26,27 @@ from tbp.monty.frameworks.utils.edge_detection import (
 from tbp.monty.math import DEFAULT_TOLERANCE
 
 angles = st.floats(min_value=-2 * np.pi, max_value=2 * np.pi)
+a_scalar = st.floats(min_value=DEFAULT_TOLERANCE, max_value=100.0)
+
+
+@st.composite
+def structure_tensors(draw, max_value=100.0, allow_zero_matrix=True):
+    """Generate valid PSD structure tensors.
+
+    Args:
+        max_value: Maximum value for Jxx, Jyy.
+        allow_zero_matrix: If True, allows zero/near-zero tensors.
+
+    Returns:
+        PSD StructureTensor satisfying Jxy^2 <= Jxx * Jyy.
+    """
+    min_val = 0.0 if allow_zero_matrix else DEFAULT_TOLERANCE
+    Jxx = draw(st.floats(min_value=min_val, max_value=max_value).filter(lambda x: abs(x) > DEFAULT_TOLERANCE))
+    Jyy = draw(st.floats(min_value=min_val, max_value=max_value).filter(lambda x: abs(x) > DEFAULT_TOLERANCE))
+    # Cauchy-Schwarz bound: |Jxy| <= sqrt(Jxx * Jyy) guarantees det(J) >= 0
+    max_Jxy = np.sqrt(Jxx * Jyy)
+    Jxy = draw(st.floats(min_value=-max_Jxy, max_value=max_Jxy).filter(lambda x: abs(x) > DEFAULT_TOLERANCE))
+    return StructureTensor(Jxx=Jxx, Jyy=Jyy, Jxy=Jxy)
 
 
 @st.composite
@@ -188,6 +210,67 @@ class EdgeAngleTo2dPoseTest(unittest.TestCase):
         npt.assert_allclose(pose[0], pose_shifted[0], atol=tol)
         npt.assert_allclose(pose[1], -pose_shifted[1], atol=tol)
         npt.assert_allclose(pose[2], -pose_shifted[2], atol=tol)
+
+
+class StructureTensorTest(unittest.TestCase):
+    def test_eigenvalues_match_analytical(self):
+        t = StructureTensor(Jxx=3.0, Jyy=1.0, Jxy=1.0)
+        lambda_min, lambda_max = t.eigenvalues
+        npt.assert_allclose(lambda_min, 2.0 - np.sqrt(2.0), atol=DEFAULT_TOLERANCE)
+        npt.assert_allclose(lambda_max, 2.0 + np.sqrt(2.0), atol=DEFAULT_TOLERANCE)
+
+    @given(t=structure_tensors())
+    @example(t=StructureTensor(Jxx=0.0, Jyy=0.0, Jxy=0.0))
+    def test_eigenvalues_ordered(self, t):
+        lambda_min, lambda_max = t.eigenvalues
+        assert lambda_min <= lambda_max
+
+    @given(t=structure_tensors())
+    @example(t=StructureTensor(Jxx=0.0, Jyy=9.0, Jxy=0.0))
+    def test_edge_strength_nonnegative(self, t):
+        assert t.edge_strength >= 0.0
+
+    @given(t=structure_tensors())
+    @example(t=StructureTensor(Jxx=4.0, Jyy=0.0, Jxy=0.0))
+    def test_coherence_in_unit_interval(self, t):
+        assert 0.0 <= t.coherence <= 1.0
+
+    @given(t=structure_tensors())
+    @example(t=StructureTensor(Jxx=4.0, Jyy=0.0, Jxy=0.0))
+    def test_edge_orientation_range(self, t):
+        assert 0.0 <= t.edge_orientation <= np.pi
+
+    @given(t=structure_tensors())
+    def test_eigenvalue_trace_equals_jxx_plus_jyy(self, t):
+        lambda_min, lambda_max = t.eigenvalues
+        npt.assert_allclose(lambda_min + lambda_max, t.Jxx + t.Jyy, atol=DEFAULT_TOLERANCE)
+
+    @given(t=structure_tensors())
+    def test_eigenvalue_product_equals_determinant(self, t):
+        lambda_min, lambda_max = t.eigenvalues
+        npt.assert_allclose(lambda_min * lambda_max, t.Jxx * t.Jyy - t.Jxy**2, atol=DEFAULT_TOLERANCE)
+
+    @given(k=a_scalar)
+    def test_isotropic_coherence_is_zero(self, k):
+        t = StructureTensor(Jxx=k, Jyy=k, Jxy=0.0)
+        npt.assert_allclose(t.coherence, 0.0, atol=DEFAULT_TOLERANCE)
+
+    @given(t=structure_tensors(), k=a_scalar)
+    def test_scaling_multiplies_edge_strength(self, t, k):
+        scaled = StructureTensor(Jxx=k * t.Jxx, Jyy=k * t.Jyy, Jxy=k * t.Jxy)
+        npt.assert_allclose(scaled.edge_strength, np.sqrt(k) * t.edge_strength, atol=DEFAULT_TOLERANCE)
+
+    @given(t=structure_tensors(), k=a_scalar)
+    @example(t=StructureTensor(Jxx=4.0, Jyy=0.0, Jxy=0.0), k=2.0)
+    @example(t=StructureTensor(Jxx=0.0, Jyy=9.0, Jxy=0.0), k=3.0)
+    def test_scaling_preserves_gradient_theta(self, t, k):
+        scaled = StructureTensor(Jxx=k * t.Jxx, Jyy=k * t.Jyy, Jxy=k * t.Jxy)
+        npt.assert_allclose(scaled.gradient_theta, t.gradient_theta, atol=DEFAULT_TOLERANCE)
+
+    @given(t=structure_tensors())
+    def test_edge_strength_equals_sqrt_lambda_max(self, t):
+        _, lambda_max = t.eigenvalues
+        npt.assert_allclose(t.edge_strength, np.sqrt(max(lambda_max, 0.0)), atol=1e-10)
 
 
 class ComputeWeightedStructureTensorEdgeFeaturesTest(unittest.TestCase):
