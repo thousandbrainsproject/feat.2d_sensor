@@ -127,7 +127,7 @@ class TestExtract2dEdge(unittest.TestCase):
 
     @patch(f"{MODULE_PATH}.is_geometric_edge", return_value=True)
     @patch(
-        f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
+        f"{MODULE_PATH}.compute_edge_features",
         return_value=(0.5, 0.8, 1.0),
     )
     def test_geometric_edge_filtered_out(self, _mock_compute, _mock_geo):  # noqa: PT019
@@ -138,7 +138,7 @@ class TestExtract2dEdge(unittest.TestCase):
         self.assertIs(result, state)
 
     @patch(
-        f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
+        f"{MODULE_PATH}.compute_edge_features",
         return_value=(0.01, 0.9, 0.5),
     )
     def test_below_strength_threshold(self, _mock_compute):  # noqa: PT019
@@ -148,7 +148,7 @@ class TestExtract2dEdge(unittest.TestCase):
         self.assertIs(result, state)
 
     @patch(
-        f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
+        f"{MODULE_PATH}.compute_edge_features",
         return_value=(0.5, 0.1, 0.5),
     )
     def test_below_coherence_threshold(self, _mock_compute):  # noqa: PT019
@@ -163,7 +163,7 @@ class TestExtract2dEdge(unittest.TestCase):
     )
     @patch(f"{MODULE_PATH}.is_geometric_edge", return_value=False)
     @patch(
-        f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
+        f"{MODULE_PATH}.compute_edge_features",
         return_value=(0.5, 0.8, 0.7),
     )
     def test_successful_edge_updates_pose(self, _mc, _mg, _mt):  # noqa: PT019
@@ -185,7 +185,7 @@ class TestExtract2dEdge(unittest.TestCase):
     @patch(f"{MODULE_PATH}.edge_angle_to_2d_pose", return_value=np.eye(3))
     @patch(f"{MODULE_PATH}.is_geometric_edge", return_value=False)
     @patch(
-        f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
+        f"{MODULE_PATH}.compute_edge_features",
         return_value=(0.5, 0.8, 0.7),
     )
     def test_strips_alpha_channel(self, mock_compute, _mg, _mt):  # noqa: PT019
@@ -200,7 +200,7 @@ class TestExtract2dEdge(unittest.TestCase):
     @patch(f"{MODULE_PATH}.is_geometric_edge")
     @patch(f"{MODULE_PATH}.edge_angle_to_2d_pose", return_value=np.eye(3))
     @patch(
-        f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
+        f"{MODULE_PATH}.compute_edge_features",
         return_value=(0.5, 0.8, 0.7),
     )
     def test_no_depth_skips_geometric_check(self, _mc, _mt, mock_geo):  # noqa: PT019
@@ -209,7 +209,7 @@ class TestExtract2dEdge(unittest.TestCase):
         mock_geo.assert_not_called()
 
     @patch(
-        f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
+        f"{MODULE_PATH}.compute_edge_features",
         return_value=(0.5, 0.8, np.pi / 4),
     )
     def test_edge_pose_uses_2d_rotation(self, _mc):  # noqa: PT019
@@ -227,7 +227,7 @@ class TestExtract2dEdge(unittest.TestCase):
 
     @patch(f"{MODULE_PATH}.edge_angle_to_2d_pose", return_value=np.eye(3))
     @patch(
-        f"{MODULE_PATH}.compute_weighted_structure_tensor_edge_features",
+        f"{MODULE_PATH}.compute_edge_features",
         return_value=(0.5, 0.8, 0.7),
     )
     def test_omits_features_not_in_list(self, _mc, _mt):  # noqa: PT019

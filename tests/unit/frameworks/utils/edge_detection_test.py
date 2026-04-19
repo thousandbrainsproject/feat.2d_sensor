@@ -19,7 +19,8 @@ from tbp.monty.frameworks.utils.edge_detection import (
     EdgeDetectionConfig,
     StructureTensor,
     _compute_center_weights,
-    compute_weighted_structure_tensor_edge_features,
+    _passes_center_check,
+    compute_edge_features,
     edge_angle_to_2d_pose,
     gradient_to_tangent_angle,
     is_geometric_edge,
@@ -114,6 +115,26 @@ def center_weight_inputs(draw):
     sigma_r = draw(st.floats(min_value=0.5, max_value=10.0))
     config = EdgeDetectionConfig(radius=radius, sigma_r=sigma_r)
     return (h, w), Ix, Iy, config
+
+
+@st.composite
+def center_check_inputs(draw):
+    """Generate valid inputs for _passes_center_check.
+
+    Uses center_weight_inputs to get realistic (weights, total_weight) pairs
+    with total_weight > 0. Filters the rare zero-weight case.
+
+    Returns:
+        Tuple of (weights, total_weight, gradient_theta, max_center_offset).
+    """
+    shape, Ix, Iy, config = draw(center_weight_inputs())
+    weights, total_weight = _compute_center_weights(shape, Ix, Iy, config)
+    assume(total_weight > 0)
+    gradient_theta = draw(angles)
+    max_center_offset = draw(
+        st.one_of(st.none(), st.integers(min_value=0, max_value=50))
+    )
+    return weights, total_weight, gradient_theta, max_center_offset
 
 
 class GradientToTangentAngleTest(unittest.TestCase):
@@ -329,41 +350,41 @@ class ComputeWeightedStructureTensorEdgeFeaturesTest(unittest.TestCase):
 
     def test_uniform_patch_returns_zero_strength(self):
         patch = self._make_rgb_patch(32, "uniform")
-        strength, _coherence, _theta = compute_weighted_structure_tensor_edge_features(
+        strength, _coherence, _theta = compute_edge_features(
             patch
         )
         self.assertAlmostEqual(strength, 0.0)
 
     def test_vertical_edge_detected(self):
         patch = self._make_rgb_patch(32, "vertical_edge")
-        strength, coherence, _ = compute_weighted_structure_tensor_edge_features(patch)
+        strength, coherence, _ = compute_edge_features(patch)
         self.assertGreater(strength, 0.0)
         self.assertGreater(coherence, 0.0)
 
     def test_vertical_edge_orientation(self):
         patch = self._make_rgb_patch(32, "vertical_edge")
-        _, _, theta = compute_weighted_structure_tensor_edge_features(patch)
+        _, _, theta = compute_edge_features(patch)
         # Vertical edge tangent should be near pi/2 or 3*pi/2
         angle_to_vertical = min(abs(theta - np.pi / 2), abs(theta - 3 * np.pi / 2))
         self.assertLess(angle_to_vertical, 0.3)
 
     def test_horizontal_edge_orientation(self):
         patch = self._make_rgb_patch(32, "horizontal_edge")
-        _, _, theta = compute_weighted_structure_tensor_edge_features(patch)
+        _, _, theta = compute_edge_features(patch)
         # Horizontal edge tangent should be near 0 or pi
         angle_to_horizontal = min(abs(theta), abs(theta - np.pi))
         self.assertLess(angle_to_horizontal, 0.3)
 
     def test_default_params_used_when_none(self):
         patch = self._make_rgb_patch(32, "vertical_edge")
-        result = compute_weighted_structure_tensor_edge_features(
+        result = compute_edge_features(
             patch, edge_detection_config=None
         )
         self.assertEqual(len(result), 3)
 
     def test_returns_three_floats(self):
         patch = self._make_rgb_patch(32, "vertical_edge")
-        result = compute_weighted_structure_tensor_edge_features(patch)
+        result = compute_edge_features(patch)
         self.assertEqual(len(result), 3)
         for val in result:
             self.assertIsInstance(val, float)
@@ -373,7 +394,7 @@ class ComputeWeightedStructureTensorEdgeFeaturesTest(unittest.TestCase):
         patch = np.full((32, 32, 3), 0, dtype=np.uint8)
         patch[:, 28:] = 255
         config = EdgeDetectionConfig(max_center_offset=1)
-        strength, coherence, theta = compute_weighted_structure_tensor_edge_features(
+        strength, coherence, theta = compute_edge_features(
             patch, config
         )
         self.assertAlmostEqual(strength, 0.0)
@@ -382,13 +403,13 @@ class ComputeWeightedStructureTensorEdgeFeaturesTest(unittest.TestCase):
 
     def test_coherence_in_zero_one_range(self):
         patch = self._make_rgb_patch(32, "vertical_edge")
-        _, coherence, _ = compute_weighted_structure_tensor_edge_features(patch)
+        _, coherence, _ = compute_edge_features(patch)
         self.assertGreaterEqual(coherence, 0.0)
         self.assertLessEqual(coherence, 1.0)
 
     def test_tangent_theta_in_valid_range(self):
         patch = self._make_rgb_patch(32, "vertical_edge")
-        _, _, theta = compute_weighted_structure_tensor_edge_features(patch)
+        _, _, theta = compute_edge_features(patch)
         self.assertGreaterEqual(theta, 0.0)
         self.assertLess(theta, 2 * np.pi)
 
@@ -459,3 +480,59 @@ class ComputeCenterWeightsTest(unittest.TestCase):
         )
         npt.assert_allclose(weights_scaled, k**2 * weights, rtol=DEFAULT_TOLERANCE)
         npt.assert_allclose(total_weight_scaled, k**2 * total_weight, rtol=DEFAULT_TOLERANCE)
+
+
+class PassesCenterCheckTest(unittest.TestCase):
+    def test_none_offset_always_passes(self):
+        h, w = PATCH_SIZE, PATCH_SIZE
+        weights = np.ones((h, w), dtype=np.float32)
+        total_weight = float(weights.sum())
+        assert _passes_center_check(weights, total_weight, 0.0, None)
+
+    def test_centered_weights_pass_any_offset(self):
+        h, w = PATCH_SIZE, PATCH_SIZE
+        weights = np.ones((h, w), dtype=np.float32)
+        total_weight = float(weights.sum())
+        assert _passes_center_check(weights, total_weight, np.pi / 4, 1)
+
+    def test_weight_at_top_fails_tight_offset(self):
+        # All weight at (row=0, col=c0). With theta=pi/2, ny=1, nx=0:
+        # dist_normal[0, c0] = ny*(0 - r0) = -r0 = -32, so abs(d_center) = 32 > 1.
+        h, w = PATCH_SIZE, PATCH_SIZE
+        r0, c0 = h // 2, w // 2
+        weights = np.zeros((h, w), dtype=np.float32)
+        weights[0, c0] = 1.0
+        assert not _passes_center_check(weights, 1.0, np.pi / 2, 1)
+
+    def test_weight_at_right_fails_along_x_axis(self):
+        # All weight at (row=r0, col=w-1). With theta=0, nx=1, ny=0:
+        # dist_normal[r0, w-1] = nx*(w-1-c0) = w//2 - 1 = 31, so abs(d_center) = 31 > 1.
+        h, w = PATCH_SIZE, PATCH_SIZE
+        r0, c0 = h // 2, w // 2
+        weights = np.zeros((h, w), dtype=np.float32)
+        weights[r0, w - 1] = 1.0
+        assert not _passes_center_check(weights, 1.0, 0.0, 1)
+
+    @given(inputs=center_check_inputs())
+    def test_none_offset_always_true(self, inputs):
+        weights, total_weight, gradient_theta, _ = inputs
+        assert _passes_center_check(weights, total_weight, gradient_theta, None)
+
+    @given(inputs=center_weight_inputs(), theta=angles, offset=st.integers(min_value=0, max_value=100))
+    def test_symmetric_weights_pass_any_nonneg_offset(self, inputs, theta, offset):
+        # center_weight_inputs produces radially symmetric weights (radial Gaussian * uniform
+        # gradient magnitude), so sum(weights*(cols-c0)) = 0 and sum(weights*(rows-r0)) = 0,
+        # giving d_center = 0 for any theta.
+        shape, Ix, Iy, config = inputs
+        weights, total_weight = _compute_center_weights(shape, Ix, Iy, config)
+        assume(total_weight > 0)
+        assert _passes_center_check(weights, total_weight, theta, offset)
+
+    @given(inputs=center_check_inputs(), delta=st.integers(min_value=0, max_value=50))
+    def test_offset_monotonicity(self, inputs, delta):
+        weights, total_weight, gradient_theta, max_center_offset = inputs
+        assume(max_center_offset is not None)
+        if _passes_center_check(weights, total_weight, gradient_theta, max_center_offset):
+            assert _passes_center_check(
+                weights, total_weight, gradient_theta, max_center_offset + delta
+            )

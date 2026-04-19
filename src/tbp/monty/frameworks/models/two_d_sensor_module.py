@@ -35,7 +35,7 @@ from tbp.monty.frameworks.models.sensor_modules import (
 from tbp.monty.frameworks.sensors import SensorID
 from tbp.monty.frameworks.utils.edge_detection import (
     EdgeDetectionConfig,
-    compute_weighted_structure_tensor_edge_features,
+    compute_edge_features,
     edge_angle_to_2d_pose,
     is_geometric_edge,
 )
@@ -268,7 +268,7 @@ class TwoDSensorModule(SensorModule):
             patch = rgba_image
 
         edge_strength, coherence, edge_orientation = (
-            compute_weighted_structure_tensor_edge_features(
+            compute_edge_features(
                 patch,
                 edge_detection_config=self.edge_detection_config,
             )

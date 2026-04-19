@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import cv2
 import numpy as np
+
+from tbp.monty.math import DIVISION_BY_ZERO_GUARD
 
 logger = logging.getLogger(__name__)
 
@@ -154,12 +157,20 @@ class StructureTensor:
     def coherence(self) -> float:
         """Edge quality in [0, 1]: 1 means perfectly oriented, 0 means isotropic."""
         lambda_min, lambda_max = self.eigenvalues
-        return (lambda_max - lambda_min) / (lambda_max + lambda_min + 1e-12)
+        return (lambda_max - lambda_min) / (lambda_max + lambda_min + DIVISION_BY_ZERO_GUARD)
 
     @property
     def edge_orientation(self) -> float:
         """Edge orientation angle in [0, pi] radians."""
         return gradient_to_tangent_angle(self.gradient_theta)
+
+
+class EdgeFeatures(NamedTuple):
+    """Edge features extracted from a single image patch."""
+
+    strength: float
+    coherence: float
+    orientation: float | None
 
 
 def _compute_sobel_gradients(
@@ -305,10 +316,10 @@ def _passes_center_check(
     return abs(d_center) <= max_center_offset
 
 
-def compute_weighted_structure_tensor_edge_features(
+def compute_edge_features(
     patch: np.ndarray,
     edge_detection_config: EdgeDetectionConfig | None = None,
-) -> tuple[float, float, float | None]:
+) -> EdgeFeatures:
     """Compute edge features using center-weighted, global-aware structure tensor.
 
     This function aggregates structure tensor components over a center-biased
@@ -326,10 +337,10 @@ def compute_weighted_structure_tensor_edge_features(
             default EdgeDetectionConfig.
 
     Returns:
-        Tuple of (edge_strength, coherence, edge_orientation):
-            - edge_strength: Magnitude of dominant eigenvalue (0.0 if no edge)
+        EdgeFeatures with:
+            - strength: Magnitude of dominant eigenvalue (0.0 if no edge)
             - coherence: Edge quality metric in [0, 1] (0.0 if no edge)
-            - edge_orientation: Edge orientation angle in [0, pi) radians (None if no edge)
+            - orientation: Edge orientation angle in [0, pi) radians (None if no edge)
 
     Notes:
         1. The Gaussian blur (Step 1) convolves all pixels in the patch with a
@@ -349,8 +360,8 @@ def compute_weighted_structure_tensor_edge_features(
     weights, total_weight = _compute_center_weights(
         gray.shape, Ix, Iy, edge_detection_config
     )
-    if total_weight < 1e-12:
-        return 0.0, 0.0, None
+    if total_weight < DIVISION_BY_ZERO_GUARD:
+        return EdgeFeatures(strength=0.0, coherence=0.0, orientation=None)
 
     aggregated = _aggregate_tensor(tensor_per_pixel, weights, total_weight)
 
@@ -360,6 +371,10 @@ def compute_weighted_structure_tensor_edge_features(
         aggregated.gradient_theta,
         edge_detection_config.max_center_offset,
     ):
-        return 0.0, 0.0, None
+        return EdgeFeatures(strength=0.0, coherence=0.0, orientation=None)
 
-    return float(aggregated.edge_strength), float(aggregated.coherence), float(aggregated.edge_orientation)
+    return EdgeFeatures(
+        strength=float(aggregated.edge_strength),
+        coherence=float(aggregated.coherence),
+        orientation=float(aggregated.edge_orientation),
+    )
