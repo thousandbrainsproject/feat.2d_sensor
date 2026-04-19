@@ -18,6 +18,7 @@ from scipy.spatial.transform import Rotation
 from tbp.monty.frameworks.utils.edge_detection import (
     EdgeDetectionConfig,
     StructureTensor,
+    _compute_center_weights,
     compute_weighted_structure_tensor_edge_features,
     edge_angle_to_2d_pose,
     gradient_to_tangent_angle,
@@ -93,6 +94,26 @@ def flat_depth_image(draw):
     """
     depth = draw(st.floats(min_value=0.01, max_value=100.0))
     return np.full((PATCH_SIZE, PATCH_SIZE), depth, dtype=np.float32)
+
+
+@st.composite
+def center_weight_inputs(draw):
+    """Generate (shape, Ix, Iy, config) for _compute_center_weights.
+
+    Uses a uniform gradient array to keep generation fast while covering
+    all structural properties.
+
+    Returns:
+        Tuple of ((h, w), Ix, Iy, config).
+    """
+    h, w = PATCH_SIZE, PATCH_SIZE
+    g = draw(a_scalar)
+    Ix = np.full((h, w), g, dtype=np.float32)
+    Iy = np.full((h, w), g, dtype=np.float32)
+    radius = draw(st.floats(min_value=1.0, max_value=20.0))
+    sigma_r = draw(st.floats(min_value=0.5, max_value=10.0))
+    config = EdgeDetectionConfig(radius=radius, sigma_r=sigma_r)
+    return (h, w), Ix, Iy, config
 
 
 class GradientToTangentAngleTest(unittest.TestCase):
@@ -370,3 +391,71 @@ class ComputeWeightedStructureTensorEdgeFeaturesTest(unittest.TestCase):
         _, _, theta = compute_weighted_structure_tensor_edge_features(patch)
         self.assertGreaterEqual(theta, 0.0)
         self.assertLess(theta, 2 * np.pi)
+
+
+class ComputeCenterWeightsTest(unittest.TestCase):
+    def test_zero_gradients_give_zero_weight(self):
+        h, w = PATCH_SIZE, PATCH_SIZE
+        Ix = np.zeros((h, w), dtype=np.float32)
+        Iy = np.zeros((h, w), dtype=np.float32)
+        weights, total_weight = _compute_center_weights(
+            (h, w), Ix, Iy, EdgeDetectionConfig()
+        )
+        assert total_weight == 0.0
+        assert np.all(weights == 0.0)
+
+    def test_center_pixel_has_maximum_weight(self):
+        h, w = PATCH_SIZE, PATCH_SIZE
+        Ix = np.ones((h, w), dtype=np.float32)
+        Iy = np.ones((h, w), dtype=np.float32)
+        config = EdgeDetectionConfig(radius=1000.0)
+        weights, _ = _compute_center_weights((h, w), Ix, Iy, config)
+        r0, c0 = h // 2, w // 2
+        assert weights[r0, c0] == np.max(weights)
+
+    def test_pixel_just_outside_radius_is_zero(self):
+        h, w = PATCH_SIZE, PATCH_SIZE
+        Ix = np.ones((h, w), dtype=np.float32)
+        Iy = np.ones((h, w), dtype=np.float32)
+        config = EdgeDetectionConfig(radius=2.0)
+        weights, _ = _compute_center_weights((h, w), Ix, Iy, config)
+        r0, c0 = h // 2, w // 2
+        assert weights[r0 + 3, c0] == 0.0
+
+    @given(inputs=center_weight_inputs())
+    def test_weights_nonnegative(self, inputs):
+        shape, Ix, Iy, config = inputs
+        weights, _ = _compute_center_weights(shape, Ix, Iy, config)
+        assert np.all(weights >= 0.0)
+
+    @given(inputs=center_weight_inputs())
+    def test_total_weight_equals_sum_of_weights(self, inputs):
+        shape, Ix, Iy, config = inputs
+        weights, total_weight = _compute_center_weights(shape, Ix, Iy, config)
+        npt.assert_allclose(total_weight, np.sum(weights))
+
+    @given(inputs=center_weight_inputs())
+    def test_output_shape_matches_input(self, inputs):
+        shape, Ix, Iy, config = inputs
+        weights, _ = _compute_center_weights(shape, Ix, Iy, config)
+        assert weights.shape == shape
+
+    @given(inputs=center_weight_inputs())
+    def test_pixels_beyond_radius_have_zero_weight(self, inputs):
+        shape, Ix, Iy, config = inputs
+        h, w = shape
+        r0, c0 = h // 2, w // 2
+        weights, _ = _compute_center_weights(shape, Ix, Iy, config)
+        rows, cols = np.meshgrid(np.arange(h), np.arange(w), indexing="ij")
+        d = np.sqrt((rows - r0) ** 2 + (cols - c0) ** 2)
+        assert np.all(weights[d > config.radius] == 0.0)
+
+    @given(inputs=center_weight_inputs(), k=a_scalar)
+    def test_gradient_scaling_scales_weights_quadratically(self, inputs, k):
+        shape, Ix, Iy, config = inputs
+        weights, total_weight = _compute_center_weights(shape, Ix, Iy, config)
+        weights_scaled, total_weight_scaled = _compute_center_weights(
+            shape, k * Ix, k * Iy, config
+        )
+        npt.assert_allclose(weights_scaled, k**2 * weights, rtol=DEFAULT_TOLERANCE)
+        npt.assert_allclose(total_weight_scaled, k**2 * total_weight, rtol=DEFAULT_TOLERANCE)
