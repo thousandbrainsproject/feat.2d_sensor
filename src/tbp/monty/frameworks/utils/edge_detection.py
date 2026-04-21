@@ -30,6 +30,9 @@ class EdgeDetectionConfig:
     """
 
     gaussian_sigma: float = 1.0
+    # TODO: Add __post_init__ validation that kernel_size is odd and positive.
+    # cv2.GaussianBlur raises a cv2.error at runtime if kernel_size is even,
+    # with no informative message from our code.
     kernel_size: int = 7
     strength_threshold: float = 0.1
     coherence_threshold: float = 0.5
@@ -188,8 +191,8 @@ def _compute_sobel_gradients(
     Returns:
         Tuple of (Ix, Iy): horizontal and vertical gradient arrays.
     """
-    Ix = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)  # noqa: N806
-    Iy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)  # noqa: N806
+    Ix = cv2.Sobel(gray, cv2.CV_32F, 1, 0)  # noqa: N806
+    Iy = cv2.Sobel(gray, cv2.CV_32F, 0, 1)  # noqa: N806
     return Ix, Iy
 
 
