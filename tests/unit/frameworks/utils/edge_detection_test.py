@@ -229,8 +229,8 @@ class EdgeAngleTo2dPoseTest(unittest.TestCase):
         np.testing.assert_allclose(pose[1], [1, 0, 0])
         np.testing.assert_allclose(pose[2], [0, 1, 0])
 
-    def test_tilted_camera_90_yaw(self):
-        """Camera yawed 90 degrees CCW shifts world_theta by pi/2."""
+    def test_camera_rolled_90_degrees(self):
+        """Camera rolled 90 degrees CCW shifts world_theta by pi/2."""
         # R = Rz(pi/2) so R.T @ [1,0,0] = [0, 1, 0], ref_angle = pi/2.
         R = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]], dtype=float)  # noqa: N806
         cam = np.eye(4)
