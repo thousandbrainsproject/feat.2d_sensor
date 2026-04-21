@@ -87,7 +87,10 @@ def gradient_to_tangent_angle(gradient_angle: float) -> float:
         gradient_angle: Gradient direction in radians (any range)
 
     Returns:
-        Edge tangent angle in [0, 2*pi) radians
+        Edge tangent angle in (0, pi] radians. Zero is never reached because
+        when Jxy is zero, floating point arithmetic produces +0.0, so
+        arctan2(+0.0, negative) returns +pi rather than -pi, pushing the
+        result to pi instead of 0.
     """
     tangent_angle = gradient_angle + np.pi / 2
     return (tangent_angle + 2 * np.pi) % (2 * np.pi)
@@ -105,7 +108,8 @@ def edge_angle_to_2d_pose(
 
     Args:
         theta: Edge angle in radians in image coordinates (y-down), measured
-            counterclockwise from the image x-axis.
+            from the image x-axis toward the image y-axis (i.e., toward the
+            bottom of the image).
         world_camera: 4x4 world-to-camera transformation matrix.
 
     Returns:
@@ -161,7 +165,7 @@ class StructureTensor:
 
     @property
     def edge_orientation(self) -> float:
-        """Edge orientation angle in [0, pi] radians."""
+        """Edge orientation angle in (0, pi] radians; see gradient_to_tangent_angle."""
         return gradient_to_tangent_angle(self.gradient_theta)
 
 
@@ -340,7 +344,7 @@ def compute_edge_features(
         EdgeFeatures with:
             - strength: Magnitude of dominant eigenvalue (0.0 if no edge)
             - coherence: Edge quality metric in [0, 1] (0.0 if no edge)
-            - orientation: Edge orientation angle in [0, pi) radians (None if no edge)
+            - orientation: Edge orientation angle in (0, pi] radians (None if no edge); see gradient_to_tangent_angle
 
     Notes:
         1. The Gaussian blur (Step 1) convolves all pixels in the patch with a
