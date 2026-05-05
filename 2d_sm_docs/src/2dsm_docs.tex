@@ -685,10 +685,113 @@ distance the sensor traveled along the surface in each tangent direction.
 
 \section{Putting it Together in TwoDSensorModule}
 
-Currently, the \texttt{TwoDSensorModule} is written similarly to \texttt{CameraSM}, with two major differences:
+The previous sections described edge extraction, tangent-frame transport, and
+arc-length correction as separate pieces. In the runtime implementation these
+pieces meet inside \texttt{TwoDSensorModule.step}. The method starts from the
+same raw-observation contract as a standard sensor module, but it changes the
+meaning of the outgoing message: the location and displacement are 2D
+coordinates embedded in a 3D-shaped Monty message, and an accepted texture
+edge is the only feature that makes the outgoing pose fully defined.
+
+\subsection{Runtime Flow in \texttt{step}}
+
+\textbf{What it does.}
+\texttt{step(ctx, observation, motor\_only\_step=False)} converts a raw sensor
+observation into a Monty message whose features remain compatible with the
+standard sensor-module API while its movement fields describe accumulated
+2D travel over the surface. It preserves the 3D curvature information needed
+for movement correction, optionally replaces the outgoing pose with a
+texture-edge pose, then rewrites the outgoing location and displacement into
+the 2D coordinate convention.
+
+\textbf{Algorithm.}
 \begin{enumerate}
-  \item After extracting 3D morphological features, it extracts edge features
+  \item If raw-observation logging is enabled, save the raw observation
+        together with the current sensor rotation and position before any
+        feature processing mutates the message state.
+  \item Run \texttt{ObservationProcessor.process(observation)}. This produces
+        the usual 3D surface state: location, on-object status, surface normal,
+        principal curvatures, curvature-derived pose vectors, and any requested
+        non-morphological features.
+  \item Copy the current pose vectors into
+        \texttt{curvature\_pose\_vectors}, and copy the current surface normal
+        into \texttt{true\_surface\_normal}. These copies happen before edge
+        extraction because edge extraction can overwrite the
+        \texttt{pose\_vectors} morphological feature.
+  \item Set the \texttt{pose\_fully\_defined} morphological flag to
+        \texttt{False}. Curvature directions no longer count as a fully defined
+        pose for this sensor module; only an accepted texture edge can restore
+        the flag to \texttt{True}.
+  \item If the state is usable and the center is on object, update the
+        transported \texttt{TangentFrame} from the saved surface normal. The
+        first on-object observation initializes the frame; later on-object
+        observations transport the same frame instance to the new normal.
+  \item If edge features were requested, call \texttt{\_extract\_2d\_edge}.
+        A detected texture edge replaces the outgoing pose vectors with a
+        2D-local edge pose and writes \texttt{edge\_strength} or
+        \texttt{coherence} when those features were requested. No-edge and
+        geometric-edge cases leave the curvature-derived pose vectors in the
+        message but keep \texttt{pose\_fully\_defined=False}.
+  \item Apply configured message noise while \texttt{use\_state} is still
+        true. If \texttt{motor\_only\_step} is set, force
+        \texttt{use\_state=False} so the message is not passed to a learning
+        module as a percept.
+  \item Call the 2D position update with the saved curvature pose and saved
+        surface normal. This projects the 3D movement into the tangent frame,
+        applies arc-length correction when curvature data is available, and
+        emits \texttt{location} and \texttt{displacement} as
+        \([x_{2d}, y_{2d}, 0]\).
+  \item Run the percept filter last. With the default
+        \texttt{PassthroughPerceptFilter}, this is a no-op; with a
+        \texttt{FeatureChangeFilter}, the comparison sees the final 2D message
+        rather than the intermediate 3D surface state.
 \end{enumerate}
 
+\textbf{Gotchas.}
+The saved \texttt{curvature\_pose\_vectors} and
+\texttt{true\_surface\_normal} are not redundant local variables. They preserve
+the original 3D surface geometry after edge extraction has had a chance to
+replace the outgoing pose. Arc-length correction needs the curvature frame
+that came from \texttt{ObservationProcessor}; using the edge pose instead would
+feed a texture tangent into a geometric curvature calculation and produce
+incorrect corrected displacements.
+
+\textbf{Subtle Details.}
+\texttt{pose\_fully\_defined} is reset before edge extraction because the
+standard observation processor can mark a curvature-derived 3D pose as fully
+defined, but \texttt{TwoDSensorModule} uses a narrower contract: the pose is
+fully defined only when a texture edge provides the in-plane direction. This
+keeps the downstream learning module from treating ordinary principal
+curvature directions as semantic 2D edge orientations.
+
+The tangent frame is updated before edge extraction so
+\texttt{\_angle\_to\_pose\_2d} can express the image-space edge angle in the
+current transported 2D frame. The frame is also updated before the 2D movement
+rewrite, so the same basis is used for pose conversion and displacement
+projection during the step.
+
+\textbf{Limitations.}
+The outgoing message keeps shape \((3,)\) for compatibility, but after
+the 2D position update the third coordinate is a dummy value fixed at zero. The
+first on-object observation seeds the 2D location from world \(x, y\), not from
+an object-intrinsic origin. As a result, two episodes that begin at different
+points on the same object produce 2D coordinate traces that are translated by
+their starting world \(x, y\), and their axes depend on the arbitrary initial
+\texttt{TangentFrame} basis.
+
+\textbf{Alternatives Considered.}
+The obvious alternative is to run edge extraction first and then use the final
+message pose everywhere. That would make the message simpler, but it would
+collapse two different pose meanings into one field: texture-edge pose for the
+learning module and curvature pose for surface-distance correction. The current
+save-before-overwrite sequence keeps those contracts separate while preserving
+the existing Monty message schema.
+
+The runtime behavior above is covered most directly by:
+\begin{verbatim}
+test_first_observation_initializes_2d_location_from_world_xy
+test_tangent_frame_transported_not_recreated
+test_multi_step_2d_position_accumulated_on_flat_surface
+\end{verbatim}
 
 \end{document}
