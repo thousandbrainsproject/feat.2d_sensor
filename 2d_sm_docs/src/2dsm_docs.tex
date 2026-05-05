@@ -1122,4 +1122,104 @@ arc_from_projection property tests
 directional_curvature property tests
 \end{verbatim}
 
+\subsection{Location and Displacement Conventions}
+
+\textbf{What it does.}
+This convention layer keeps \texttt{TwoDSensorModule} compatible with Monty's
+3D message schema while using the first two coordinates as an accumulated 2D
+surface chart. The outgoing message still contains 3-vector locations and
+3-vector displacements, but the third coordinate is a dummy 2D channel fixed at
+zero.
+
+\textbf{Algorithm.}
+\begin{enumerate}
+  \item Receive the real 3D sensor location from \texttt{ObservationProcessor}.
+        This is the geometric location used internally to compute movement.
+  \item On the first on-object contact, initialize the private 2D state from
+        the real world \(x, y\) coordinates and emit location \([x, y, 0]\).
+  \item On later on-object contacts, compute an incremental tangent-frame
+        displacement \((du, dv)\), add it to the private accumulated 2D
+        location, and emit location \([x_{2d}, y_{2d}, 0]\).
+  \item Emit displacement as \([du, dv, 0]\) for nonzero tangent movement, and
+        as \([0, 0, 0]\) for off-object observations or near-zero tangent
+        movement. The first on-object contact seeds state and does not emit a
+        displacement field.
+\end{enumerate}
+
+\textbf{Gotchas.}
+The \(z\) coordinate in the outgoing message is not a height coordinate. It is
+always zero after the 2D position rewrite. Code that compares
+\texttt{TwoDSensorModule} locations against 3D sensor-module locations must not
+interpret matching shape as matching semantics.
+
+The first two coordinates change meaning after the first on-object contact.
+The first emitted location uses the world \(x, y\) of the contact point. Later
+locations are accumulated tangent-frame displacements added to that seed. On a
+flat world-\(xy\)-aligned surface those values match raw world \(x, y\); on a
+curved surface or a differently oriented visible plane they are local chart
+coordinates, not raw world coordinates.
+
+The displacement field is incremental while the location field is accumulated.
+\([du, dv, 0]\) describes the current step in the transported tangent frame;
+\([x_{2d}, y_{2d}, 0]\) describes the accumulated position in the episode's 2D
+chart. Treating displacement as an absolute 2D location would double-count
+movement or collapse the trajectory to per-step offsets.
+
+\textbf{Subtle Details.}
+The use of world \(x, y\) as the first seed is a compatibility convention, not a
+claim that the object has a world-\(xy\) intrinsic 2D coordinate system. It gives
+the first message a concrete 3-vector location without introducing a new origin
+field. After that, the transported tangent frame, not the world axes, defines
+the incremental coordinate directions.
+
+The dummy \(z=0\) coordinate keeps the message shape compatible with CMP and
+with learning-module code that expects 3-vectors. This avoids a schema split
+between 2D and 3D sensor modules, but it pushes the burden of interpretation
+onto the sensor-module contract: consumers must know that this sender's third
+coordinate carries no geometric information.
+
+\textbf{Limitations.}
+The convention does not make 2D traces automatically comparable across
+episodes. Different first contact points translate the chart, and different
+initial tangent-frame bases rotate it. A downstream learning module must either
+handle those differences or the system must provide an external canonical
+alignment.
+
+The convention is explicitly aligned with views whose relevant projection is
+world \(xy\). The class docstring calls out the failure mode: for a camera
+looking along the world \(x\)-axis, the visible plane is closer to \(yz\), but
+the initial emitted 2D location still uses world \(x, y\). In that view, the
+seed coordinate does not match the visible image plane.
+
+The first on-object message can contain a rewritten 2D location without a
+displacement field. This is consistent with the state-machine semantics: no
+previous on-object point exists yet, so there is no measured step. Consumers
+that require displacement on every used state need an explicit first-contact
+fallback.
+
+\textbf{Alternatives Considered.}
+One alternative is to emit a true 2-vector for 2D locations and displacements.
+That would make the coordinate dimensionality explicit, but it would require
+separate message handling in CMP and downstream learning modules. The current
+3-vector encoding preserves the existing schema.
+
+Another alternative is to define the first 2D location as \([0, 0, 0]\) and
+store all positions relative to first contact. That would remove the inherited
+world-\(xy\) translation, but it would also change the apparent location scale
+seen by existing consumers and would require a separate way to recover the
+contact point if needed for logging or alignment.
+
+A third alternative is to seed from the camera image plane rather than world
+\(x, y\). That would better match views that are not world-\(xy\)-aligned, but
+it would require a camera-frame convention for every sensor orientation. The
+current implementation keeps the seed simple and documents that non-\(xy\)
+views need a different projection convention.
+
+\textbf{Relevant tests.}
+\begin{verbatim}
+test_first_observation_initializes_2d_location_from_world_xy
+test_like_how_monty_uses_two_d_sm
+test_multi_step_2d_position_accumulated_on_flat_surface
+\end{verbatim}
+
 \end{document}
