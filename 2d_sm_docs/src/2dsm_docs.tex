@@ -31,10 +31,99 @@ The implementation of TwoDSensorModule was roughly divided into two phases:
 
 Key functions:
 \begin{enumerate}
+  \item \texttt{StructureTensor}
   \item \texttt{EdgeDetector.\_\_call\_\_}
   \item \texttt{\_angle\_to\_pose\_2d}
   \item \texttt{EdgeDetector.\_is\_geometric\_edge}, \texttt{\_gradient\_to\_tangent\_angle}
 \end{enumerate}
+
+\subsection{\texttt{StructureTensor}}
+
+\textbf{The Problem.}
+A Sobel gradient at one pixel gives a local direction of intensity change,
+but a sensor patch contains thousands of such gradients. Some gradients come
+from the dominant texture edge, some come from noise, and some come from
+secondary texture. We need a compact way to summarize whether the patch
+contains one coherent orientation or many competing orientations.
+
+A simple average of gradient angles is not sufficient. Angles wrap around,
+opposite gradients can describe the same edge, and weak gradients from flat
+regions should not count the same as strong gradients near an edge. The
+representation must preserve orientation evidence without committing too
+early to a single angle.
+
+\textbf{The Solution.}
+\texttt{StructureTensor} stores the second-order gradient statistics for a
+local image region:
+\[
+  J =
+  \begin{bmatrix}
+    J_{xx} & J_{xy} \\
+    J_{xy} & J_{yy}
+  \end{bmatrix}
+  =
+  \begin{bmatrix}
+    I_x^2 & I_x I_y \\
+    I_x I_y & I_y^2
+  \end{bmatrix}
+\]
+In \texttt{EdgeDetector}, this tensor is first computed per pixel and
+Gaussian-smoothed, then the smoothed tensors are aggregated over the patch
+with center-biased weights. After aggregation, \texttt{StructureTensor}
+represents the dominant gradient statistics of the whole weighted patch.
+
+The eigenvectors of $J$ identify the directions of smallest and largest
+gradient variation. The largest eigenvalue, $\lambda_{\max}$, measures how
+much gradient energy exists in the dominant gradient direction. The smallest
+eigenvalue, $\lambda_{\min}$, measures how much gradient energy exists in the
+orthogonal direction. A clean straight edge has one large eigenvalue and one
+small eigenvalue. A corner, junction, or isotropic texture has two more
+similar eigenvalues because gradient energy exists in multiple directions.
+
+\textbf{Orientation, Strength, and Coherence.}
+The dominant gradient direction is computed directly from the tensor entries:
+\[
+  \theta_g =
+    \frac{1}{2}
+    \arctan2(2J_{xy}, J_{xx} - J_{yy})
+\]
+The factor $\frac{1}{2}$ is load-bearing. The tensor describes orientation,
+not a signed vector direction, so the relevant space is modulo $\pi$ rather
+than modulo $2\pi$. The doubled-angle formula lets the tensor combine
+opposite gradients that correspond to the same undirected edge.
+
+The edge tangent is perpendicular to the gradient direction:
+\[
+  \theta_e = \theta_g + \frac{\pi}{2}
+\]
+The implementation wraps this value into the range used by the downstream
+edge pose code. In practice the detected edge orientation is undirected:
+angles that differ by $\pi$ describe the same edge line.
+
+Edge strength is:
+\[
+  \sqrt{\lambda_{\max}}
+\]
+This returns the dominant gradient magnitude scale rather than the squared
+energy scale stored in the tensor. Coherence is:
+\[
+  \frac{\lambda_{\max} - \lambda_{\min}}
+       {\lambda_{\max} + \lambda_{\min}}
+\]
+with a zero fallback when the eigenvalue difference is below tolerance. This
+score is close to 1 when the patch has one dominant orientation and close to
+0 when the gradient evidence is isotropic or ambiguous.
+
+\textbf{Subtle Details.}
+The tensor components are squared before smoothing or aggregation. This is
+what preserves local gradient energy. Smoothing $I_x$ and $I_y$ first would
+allow nearby opposite gradients to cancel before the tensor is formed,
+weakening the orientation estimate.
+
+The tensor also separates ``how much edge evidence exists'' from ``how
+coherent that evidence is.'' A high-contrast corner can have high strength
+but low coherence, while a faint but clean line can have lower strength and
+higher coherence. \texttt{EdgeDetector} therefore thresholds both values.
 
 \subsection{\texttt{EdgeDetector}}
 
