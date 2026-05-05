@@ -18,7 +18,7 @@
 
 \section{Introduction}
 
-This document is a reference manual to \href{https://github.com/thousandbrainsproject/feat.2d_sensor_module}{\texttt{TwoDSensorModule}}. The document will cover results and explanation of how and why certain algorithms are implemented, and also point out limitations and areas for improvement. The manual will be detailed enough for someone who is interested in improving any part of the TwoDSensorModule to have a good understanding on why certain things were chosen and get a guide for where to go.
+This document is a reference manual to \href{https://github.com/thousandbrainsproject/tbp.monty}{\texttt{TwoDSensorModule}} as implemented in \texttt{tbp.monty} version \texttt{0.33.0}. The document will cover results and explanation of how and why certain algorithms are implemented, and also point out limitations and areas for improvement. The manual will be detailed enough for someone who is interested in improving any part of the TwoDSensorModule to have a good understanding on why certain things were chosen and get a guide for where to go.
 
 The implementation of TwoDSensorModule was roughly divided into two phases:
 
@@ -31,9 +31,9 @@ The implementation of TwoDSensorModule was roughly divided into two phases:
 
 Key functions:
 \begin{enumerate}
-  \item \texttt{compute\_edge\_features}
-  \item \texttt{edge\_angle\_to\_2d\_pose}
-  \item \texttt{is\_geometric\_edge}, \texttt{gradient\_to\_tangent\_angle}
+  \item \texttt{EdgeDetector.\_\_call\_\_}
+  \item \texttt{\_angle\_to\_pose\_2d}
+  \item \texttt{EdgeDetector.\_is\_geometric\_edge}, \texttt{\_gradient\_to\_tangent\_angle}
 \end{enumerate}
 
 The Problem. This feature was initially posed as a edge detection problem, however, in reality a much more complex problem. While functions that extract surface normal rely on extracting the value at the center of the 64 x64 patch, we are not interested in whether an edge exists at the center, but rather whether there is a dominant edge within the patch and what its orientation is. What constitutes as "dominant" and how much it should be "center-focused"
@@ -44,13 +44,13 @@ Below figure demonstrates some examples and desired properties of this problem.
 
 % Add figure here
 
-The Solution. The main algorithm that performs dominant edge detection as well as computing its orientation, edge strength, and coherence is implemented in \texttt{compute\_edge\_features}
+The Solution. The main algorithm that performs dominant edge detection as well as computing its orientation, edge strength, and coherence is implemented in \texttt{EdgeDetector.\_\_call\_\_}. This class replaces the earlier standalone \texttt{compute\_edge\_features} function while preserving the same conceptual algorithm. The callable class structure lets \texttt{TwoDSensorModule} hold a configured detector instance and sets the pattern for future feature detectors.
 
 Note that we have explored well-known edge detection methods such as Canny Edge Detector (cv2.CannyEdge) and
 
 Additional Details.
 
-Note that by itself, \texttt{compute\_edge\_features}
+Note that by itself, \texttt{EdgeDetector.\_\_call\_\_}
 Helper Functions and brief explanations
 \begin{enumerate}
   \item \texttt{GaussianBlurRGB} in \texttt{transforms.py}
