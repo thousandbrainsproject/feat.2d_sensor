@@ -903,4 +903,95 @@ test_extract_2d_edge_ignores_geometric_edge
 directional_curvature property tests
 \end{verbatim}
 
+\subsection{\texttt{\_update\_tangent\_frame}}
+
+\textbf{What it does.}
+\texttt{\_update\_tangent\_frame(surface\_normal\_3d)} keeps the sensor's
+local 2D coordinate frame attached to the observed surface. The first usable
+on-object observation creates the frame; later usable on-object observations
+parallel-transport that same frame to the new surface normal.
+
+\textbf{Algorithm.}
+\begin{enumerate}
+  \item Normalize the saved true 3D surface normal. This makes the wrapper
+        tolerant of small magnitude drift in upstream normal estimation.
+  \item If \texttt{self.\_tangent\_frame} is \texttt{None}, construct a new
+        \texttt{TangentFrame}. Its initial \(u\) and \(v\) axes are arbitrary
+        tangent-plane axes derived from the normal.
+  \item Otherwise, call \texttt{transport(surface\_normal\_3d)} on the existing
+        frame. Transport rotates the current \(u\) axis by the minimum rotation
+        that carries the previous normal to the new normal, then rebuilds
+        \(v = n \times u\).
+\end{enumerate}
+
+\textbf{Gotchas.}
+The method is called only when the observed state is usable and on object.
+Invalid observations and off-object observations do not initialize the frame
+and do not advance it. A long off-object interval therefore leaves the last
+on-object tangent frame in place until the next usable surface contact.
+
+The initial frame orientation is not canonical. A surface normal defines a
+tangent plane, but it does not define the \(u\) and \(v\) axes inside that
+plane. \texttt{TangentFrame} chooses those axes from an arbitrary reference
+axis, so the first on-object observation fixes the episode's local 2D axes.
+Two episodes that start from different surface normals get different initial
+2D coordinate frames even on the same object.
+
+\textbf{Subtle Details.}
+The same \texttt{TangentFrame} object is transported rather than recreated.
+This preserves the accumulated orientation of the local 2D chart. Recreating a
+new frame at each step would choose a fresh arbitrary tangent basis from the
+new normal, causing the meaning of \((du, dv)\) to rotate or jump between
+successive observations. The unit test that checks transport-not-recreation
+asserts that the frame object after the second step is the same object created
+on the first step.
+
+Transport depends on the saved \texttt{true\_surface\_normal}, not the
+outgoing edge pose. After edge extraction, the message pose normal is the
+2D-local row \([0, 0, 1]\). Transporting against that row would align the frame
+to a message convention instead of the actual 3D surface normal.
+
+The re-orthonormalization happens inside \texttt{TangentFrame.transport}, not
+inside this wrapper. After rotation, the transported \(u\) vector is projected
+back into the tangent plane and normalized, then \(v\) is recomputed as
+\(n \times u\). This keeps repeated transports from accumulating floating-point
+drift over long trajectories.
+
+\textbf{Limitations.}
+The frame encodes a local unrolling path, not an object-intrinsic coordinate
+system. Its orientation depends on the first surface normal and on the path of
+subsequent transported normals. Starting the same object from a different
+surface point changes the initial tangent basis and therefore rotates the
+resulting 2D trace.
+
+The wrapper normalizes the supplied normal and has no local fallback for a
+near-zero vector. If upstream surface-normal estimation produced a near-zero
+normal while still marking the observation usable, \texttt{normalize} would
+raise a \texttt{ValueError}. The intended guard is the
+\texttt{ObservationProcessor} validity path, which sets \texttt{use\_state}
+false when surface geometry is not valid.
+
+\textbf{Alternatives Considered.}
+One alternative is to define \(u\) and \(v\) directly from world axes at every
+step. That would make each frame deterministic from the current normal alone,
+but it would add arbitrary twist whenever the normal crosses the reference-axis
+singularity or moves around curved geometry. Parallel transport instead
+preserves the previous in-plane orientation and introduces only the rotation
+required by the changing surface normal.
+
+Another alternative is to express displacement in a fixed world frame and skip
+tangent-frame transport. That works only on surfaces whose tangent plane is
+approximately fixed. On a curved surface, the fixed world frame stops matching
+the local tangent plane, so accumulated \((x, y)\) displacement no longer
+represents surface travel in the unrolled 2D chart.
+
+\textbf{Relevant tests.}
+\begin{verbatim}
+test_tangent_frame_transported_not_recreated
+test_init_creates_orthonormal_frame
+test_transport_to_same_normal_is_noop
+test_transport_preserves_orthonormality
+test_accumulated_transports_stay_orthonormal
+\end{verbatim}
+
 \end{document}
