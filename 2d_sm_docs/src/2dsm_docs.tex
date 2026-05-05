@@ -32,9 +32,11 @@ The implementation of TwoDSensorModule was roughly divided into two phases:
 Key functions:
 \begin{enumerate}
   \item \texttt{StructureTensor}
+  \item \texttt{\_gradient\_to\_tangent\_angle}
   \item \texttt{EdgeDetector.\_\_call\_\_}
+  \item \texttt{EdgeFeatures}
   \item \texttt{\_angle\_to\_pose\_2d}
-  \item \texttt{EdgeDetector.\_is\_geometric\_edge}, \texttt{\_gradient\_to\_tangent\_angle}
+  \item \texttt{EdgeDetector.\_is\_geometric\_edge}
 \end{enumerate}
 
 \subsection{\texttt{StructureTensor}}
@@ -124,6 +126,59 @@ The tensor also separates ``how much edge evidence exists'' from ``how
 coherent that evidence is.'' A high-contrast corner can have high strength
 but low coherence, while a faint but clean line can have lower strength and
 higher coherence. \texttt{EdgeDetector} therefore thresholds both values.
+
+\subsection{\texttt{\_gradient\_to\_tangent\_angle}}
+
+\textbf{The Problem.}
+\texttt{StructureTensor.gradient\_theta} gives the dominant gradient
+direction, but the feature passed to the 2D sensor is an edge tangent. The
+gradient points normal to an edge: it points across the intensity change,
+not along the line that the sensor should use as the local edge direction.
+
+There is also an angle-convention issue. The current structure-tensor
+detector represents undirected edge orientation. A line at angle $\theta$ and
+the same line at angle $\theta + \pi$ describe the same edge. Future
+directional edges, such as distinguishing light-to-dark from dark-to-light,
+would require preserving gradient polarity somewhere else in the detector.
+The current tensor has already squared and multiplied gradients, so opposite
+gradient signs have been intentionally collapsed.
+
+\textbf{The Solution.}
+\texttt{\_gradient\_to\_tangent\_angle} rotates the gradient direction by
+$\frac{\pi}{2}$:
+\[
+  \theta_e = \theta_g + \frac{\pi}{2}
+\]
+This converts a normal direction into the corresponding tangent direction.
+The implementation then wraps the result with:
+\[
+  (\theta_e + 2\pi) \bmod 2\pi
+\]
+so the returned value is always non-negative and less than $2\pi$.
+
+In current use, this helper is called from \texttt{StructureTensor.edge\_angle}.
+That call site supplies \texttt{gradient\_theta}, which comes from the
+half-angle structure-tensor formula and represents an undirected orientation.
+Downstream tests therefore compare detected edge angles modulo $\pi$, because
+$\theta$ and $\theta + \pi$ are equivalent for the present detector.
+
+\textbf{Subtle Details.}
+The helper itself wraps to $[0, 2\pi)$; it does not by itself enforce an
+undirected $[0, \pi]$ range for arbitrary inputs. The effective undirected
+range comes from the structure-tensor caller, not from the modulo operation in
+this helper. This distinction matters if a future detector introduces
+directional edge polarity. In that case, preserving $[0, 2\pi)$ can be useful,
+but the detector would also need a source of signed gradient information that
+the current tensor representation no longer contains.
+
+\textbf{Gotchas.}
+The lower endpoint of the practical edge-angle range is sensitive to IEEE 754
+signed zero behavior. For a horizontal or vertical idealized tensor,
+\texttt{arctan2(+0.0, negative)} returns $\pi$, while
+\texttt{arctan2(-0.0, negative)} returns $-\pi$. Because the structure tensor
+usually produces positive zero for \texttt{Jxy = Ix * Iy}, the wrapped tangent
+angle lands at $\pi$ rather than $0$. The tests therefore treat edge
+orientation as modulo $\pi$ instead of depending on one endpoint convention.
 
 \subsection{\texttt{EdgeDetector}}
 
@@ -285,6 +340,62 @@ center. A Gabor filter bank could test for edges at several orientations, but
 it requires choosing a discrete orientation grid and running multiple
 convolutions. The structure tensor gives a continuous orientation estimate in
 one pass while still allowing center bias through the weight map.
+
+\subsection{\texttt{EdgeFeatures}}
+
+\textbf{The Problem.}
+The edge detector produces several related quantities, and downstream code
+needs to distinguish measurement from decision. A patch can contain enough
+gradient evidence to estimate an orientation but still fail the detector's
+thresholds because the edge is too weak or the gradient evidence is not
+coherent enough. Conversely, a patch can fail before an orientation exists at
+all, such as a uniform patch or an edge rejected by \texttt{max\_center\_offset}.
+
+\textbf{The Solution.}
+\texttt{EdgeFeatures} is the handoff object returned by
+\texttt{EdgeDetector.\_\_call\_\_}. It stores:
+\begin{itemize}
+  \item \texttt{angle}: the estimated dominant edge orientation, or
+        \texttt{None} when no reliable orientation was computed.
+  \item \texttt{strength}: the dominant gradient magnitude scale.
+  \item \texttt{coherence}: the orientation-quality score in $[0, 1]$.
+  \item \texttt{is\_geometric\_edge}: whether the RGB edge corresponds to a
+        depth discontinuity.
+  \item \texttt{has\_edge}: the final thresholded detector decision.
+\end{itemize}
+\texttt{has\_edge} is the definitive decision flag. \texttt{angle} is an
+estimated dominant orientation whenever the detector has enough gradient
+evidence to compute one. A weak or low-coherence patch can therefore have a
+non-\texttt{None} \texttt{angle} while \texttt{has\_edge} is false.
+
+\textbf{Downstream Contract.}
+\texttt{TwoDSensorModule.\_extract\_2d\_edge} uses \texttt{has\_edge} as the
+first gate. If \texttt{has\_edge} is false, the original curvature-based pose
+is left unchanged. If \texttt{has\_edge} is true but
+\texttt{is\_geometric\_edge} is also true, the pose is also left unchanged,
+because the 2D sensor is trying to represent texture edges on a surface rather
+than object boundaries or surface creases. Only a detected non-geometric edge
+is converted into 2D pose vectors.
+
+\textbf{Gotchas.}
+\texttt{angle is not None} is not equivalent to \texttt{has\_edge}. Treating a
+non-\texttt{None} angle as a detected edge admits weak or incoherent patches
+into the 2D pose pipeline. Treating \texttt{has\_edge} as the gate preserves
+the detector's intended separation between diagnostic measurements and usable
+edge features.
+
+\textbf{Limitations.}
+The dataclass does not encode why detection failed. A uniform patch and an
+edge rejected by \texttt{max\_center\_offset} both return
+\begin{itemize}
+  \item \texttt{angle=None}
+  \item \texttt{strength=0.0}
+  \item \texttt{coherence=0.0}
+  \item \texttt{is\_geometric\_edge=False}
+  \item \texttt{has\_edge=False}
+\end{itemize}
+If future debugging or learning logic needs to distinguish these cases, the
+result type will need an explicit rejection reason.
 
 \section{Part II: Implementing 2D Movement}
 
