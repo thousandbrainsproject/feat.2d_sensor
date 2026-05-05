@@ -794,4 +794,113 @@ test_tangent_frame_transported_not_recreated
 test_multi_step_2d_position_accumulated_on_flat_surface
 \end{verbatim}
 
+\subsection{Saving Curvature Pose Before Edge Pose}
+
+\textbf{What it does.}
+The save-before-overwrite step preserves the 3D curvature frame produced by
+\texttt{ObservationProcessor} before \texttt{\_extract\_2d\_edge} reuses the
+same \texttt{pose\_vectors} field for a different purpose. The saved
+\texttt{curvature\_pose\_vectors} and \texttt{true\_surface\_normal} are the
+geometry inputs for tangent-frame transport and arc-length correction; the
+possibly overwritten message pose is the semantic edge pose sent downstream.
+
+\textbf{Algorithm.}
+\begin{enumerate}
+  \item \texttt{ObservationProcessor} builds a 3D pose matrix from surface
+        geometry:
+        \[
+          \begin{bmatrix}
+            \text{surface normal} \\
+            \text{first principal curvature direction} \\
+            \text{second principal curvature direction}
+          \end{bmatrix}
+        \]
+  \item \texttt{step} saves a copy of that matrix and separately saves a copy
+        of row 0, the true 3D surface normal.
+  \item If a usable on-object observation is being processed, the tangent frame
+        is initialized or transported using \texttt{true\_surface\_normal}.
+  \item If edge extraction accepts a texture edge, \texttt{\_extract\_2d\_edge}
+        writes a new 2D-local pose matrix back into
+        \texttt{morphological\_features["pose\_vectors"]}:
+        \[
+          \begin{bmatrix}
+            [0, 0, 1] \\
+            \text{edge tangent in 2D coordinates} \\
+            \text{edge perpendicular in 2D coordinates}
+          \end{bmatrix}
+        \]
+  \item The later 2D position update receives the saved curvature pose, not the
+        outgoing edge pose. When arc correction is active, rows 1 and 2 of the
+        saved matrix remain the principal curvature directions required by
+        Euler's curvature formula.
+\end{enumerate}
+
+\textbf{Gotchas.}
+\texttt{pose\_vectors} means two incompatible things during one call to
+\texttt{step}. Before edge extraction, rows 1 and 2 are principal curvature
+directions in 3D world coordinates. After accepted edge extraction, rows 1 and
+2 are an edge tangent and perpendicular expressed in the 2D tangent-frame
+coordinates, while row 0 is the dummy 2D normal \([0, 0, 1]\). Calling
+\texttt{get\_surface\_normal()} or \texttt{get\_curvature\_directions()} after
+that overwrite returns the edge-pose interpretation, not the original surface
+geometry.
+
+\texttt{pose\_fully\_defined} follows the outgoing pose interpretation, not the
+saved curvature interpretation. A high-curvature surface can produce a fully
+defined principal-curvature frame in the standard observation processor, but
+\texttt{TwoDSensorModule} resets the flag to \texttt{False} and sets it back to
+\texttt{True} only for an accepted texture edge.
+
+\textbf{Subtle Details.}
+The copies are made before edge extraction and before message noise. This
+ordering gives \texttt{\_angle\_to\_pose\_2d} the true 3D surface normal for
+projecting the image-space edge direction, then gives the displacement update
+the same geometric normal for tangent-plane projection. Re-reading the surface
+normal from the message after edge extraction would read the 2D-local normal
+row \([0, 0, 1]\), which is a coordinate-system convention rather than the
+observed 3D surface normal.
+
+\texttt{.copy()} documents ownership. Edge extraction currently replaces the
+entire \texttt{pose\_vectors} array, so a simple local reference would still
+point at the old array. The copy also protects the saved curvature frame from
+future in-place edits to the same array object, which is the safer contract for
+a value that is passed to a later mathematical correction.
+
+\textbf{Limitations.}
+The save-before-overwrite pattern only preserves the geometry successfully
+computed for the current center point. If the standard processor returns
+invalid curvature directions or the message lacks usable curvature magnitudes,
+the later displacement update falls back to chord-length \((du, dv)\) rather
+than corrected arc length.
+
+There is also an implementation mismatch to track separately from this design:
+the standard processor writes \texttt{principal\_curvatures} as a
+non-morphological feature, while the current 2D position update looks in the
+morphological feature dictionary. In that runtime path, the saved curvature
+pose is still correct and necessary, but the arc-correction branch is skipped
+unless a caller supplies the curvatures where the update currently looks for
+them.
+
+\textbf{Alternatives Considered.}
+One alternative is to never overwrite \texttt{pose\_vectors}; the message could
+carry separate fields such as \texttt{curvature\_pose\_vectors} and
+\texttt{edge\_pose\_vectors}. That schema would make the two meanings explicit,
+but it would require downstream LM and CMP changes. The current implementation
+keeps the existing message shape and isolates the dual use inside the
+\texttt{step} method.
+
+Another alternative is to recompute curvature pose after edge extraction. That
+would avoid the saved local variables, but it would repeat an expensive
+surface-processing step and risk using a different neighborhood or validity
+state from the one that produced the outgoing observation. Saving the original
+geometry is cheaper and preserves one coherent snapshot for the whole step.
+
+\textbf{Relevant tests.}
+\begin{verbatim}
+test_extract_2d_edge_sets_edge_pose_and_features
+test_extract_2d_edge_ignores_no_edge
+test_extract_2d_edge_ignores_geometric_edge
+directional_curvature property tests
+\end{verbatim}
+
 \end{document}
