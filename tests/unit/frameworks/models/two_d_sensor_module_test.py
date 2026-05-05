@@ -9,448 +9,446 @@
 
 from __future__ import annotations
 
-import logging
 import unittest
-from unittest.mock import MagicMock, patch
+from typing import Any, Callable
+from unittest.mock import Mock, sentinel
 
 import numpy as np
-import numpy.testing as nptest
-import pytest
-from hypothesis import given
-from hypothesis import strategies as st
+import quaternion as qt
 
 from tbp.monty.cmp import Message
+from tbp.monty.context import RuntimeContext
+from tbp.monty.frameworks.models.abstract_monty_classes import SensorObservation
+from tbp.monty.frameworks.models.motor_system_state import AgentState, SensorState
 from tbp.monty.frameworks.models.two_d_sensor_module import TwoDSensorModule
-from tbp.monty.frameworks.utils.edge_detection import EdgeDetectionConfig
+from tbp.monty.frameworks.sensors import SensorID
+from tbp.monty.frameworks.utils.edge_detection import DEFAULT_POSE_2D, EdgeFeatures
 from tbp.monty.math import DEFAULT_TOLERANCE
+from tests.unit.frameworks.utils.edge_detection_test import (
+    PATCH_SIZE,
+    sensor_observation,
+)
 
-MODULE_PATH = "tbp.monty.frameworks.models.two_d_sensor_module"
-
-# ---------------------------------------------------------------------------
-# Hypothesis strategies
-# ---------------------------------------------------------------------------
-
-a_3d_location = st.lists(
-    st.floats(-1e6, 1e6, allow_nan=False, allow_infinity=False),
-    min_size=3,
-    max_size=3,
-).map(np.array)
-
-_FLAT_POSE = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], dtype=float)
+DEFAULT_FEATURES = [
+    "on_object",
+    "pose_vectors",
+    "principal_curvatures",
+    "edge_strength",
+    "coherence",
+]
+SURFACE_NORMAL_3D = np.array([0.0, 0.0, 1.0])
+FLAT_SURFACE_POSE = DEFAULT_POSE_2D
 
 
-def make_message(**overrides):
-    """Create a Message with sensible defaults.
+def make_message(
+    location: np.ndarray | None = None,
+    on_object: bool = True,
+    use_state: bool = True,
+    pose_vectors: np.ndarray | None = None,
+    pose_fully_defined: bool = False,
+    principal_curvatures: np.ndarray | None = None,
+    non_morphological_features: dict | None = None,
+    sender_id: str = "patch",
+    sender_type: str = "SM",
+):
+    if location is None:
+        location = np.array([0.0, 0.0, 0.0])
+    if pose_vectors is None:
+        pose_vectors = np.identity(3)
+    if principal_curvatures is None:
+        principal_curvatures = np.identity(3)
 
-    use_state=False by default to skip _check_all_attributes() validation.
+    morphological_features = {
+        "pose_vectors": pose_vectors,
+        "pose_fully_defined": pose_fully_defined,
+        "on_object": float(on_object),
+    }
+    non_morphological_features = (
+        {} if non_morphological_features is None else non_morphological_features
+    )
+    if principal_curvatures is not None:
+        non_morphological_features["principal_curvatures"] = principal_curvatures
 
-    Returns:
-        A Message constructed from defaults merged with overrides.
-    """
-    defaults = dict(
-        location=np.array([1.0, 2.0, 3.0]),
-        morphological_features={
-            "pose_vectors": np.eye(3),
-            "pose_fully_defined": False,
-        },
-        non_morphological_features={},
+    return Message(
+        location=location,
+        morphological_features=morphological_features,
+        non_morphological_features=non_morphological_features,
         confidence=1.0,
-        use_state=False,
-        sender_id="test_sm",
-        sender_type="SM",
+        use_state=use_state,
+        sender_id=sender_id,
+        sender_type=sender_type,
     )
-    defaults.update(overrides)
-    return Message(**defaults)
 
 
+def make_agent_state(
+    sensor_module_id: str = "test",
+    agent_position: np.ndarray | None = None,
+    agent_rotation: qt.quaternion | None = None,
+    sensor_position: np.ndarray | None = None,
+    sensor_rotation: qt.quaternion | None = None,
+):
+    if agent_position is None:
+        agent_position = np.zeros(3)
+    if agent_rotation is None:
+        agent_rotation = qt.quaternion(1, 0, 0, 0)
+    if sensor_position is None:
+        sensor_position = np.zeros(3)
+    if sensor_rotation is None:
+        sensor_rotation = qt.quaternion(1, 0, 0, 0)
 
-def make_module(**overrides):
-    """Create a TwoDSensorModule with minimal valid args.
-
-    Returns:
-        A TwoDSensorModule constructed from defaults merged with overrides.
-    """
-    defaults = dict(
-        sensor_module_id="test_sm",
-        features=["edge_strength", "coherence", "on_object"],
+    return AgentState(
+        sensors={
+            SensorID(sensor_module_id): SensorState(
+                position=sensor_position,
+                rotation=sensor_rotation,
+            )
+        },
+        position=agent_position,
+        rotation=agent_rotation,
     )
-    defaults.update(overrides)
-    return TwoDSensorModule(**defaults)
 
 
-# ---------------------------------------------------------------------------
-# TestInit
-# ---------------------------------------------------------------------------
-
-
-class TestInit(unittest.TestCase):
-    def test_default_edge_config_when_none(self):
-        sm = make_module(edge_detection_config=None)
-        expected = EdgeDetectionConfig()
-        assert sm.edge_detection_config == expected
-
-    def test_custom_edge_config_stored(self):
-        config = EdgeDetectionConfig(strength_threshold=0.5)
-        sm = make_module(edge_detection_config=config)
-        assert sm.edge_detection_config is config
-
-    def test_warns_missing_edge_features(self):
-        logger = logging.getLogger(MODULE_PATH)
-        with self.assertLogs(logger, level="WARNING") as cm:
-            make_module(features=["on_object"])
-        assert any("edge_strength" in msg or "coherence" in msg for msg in cm.output)
-
-    def test_no_warning_when_edge_features_present(self):
-        logger = logging.getLogger(MODULE_PATH)
-        with self.assertLogs(logger, level="DEBUG") as cm:
-            logger.debug("sentinel")
-            make_module(features=["edge_strength", "coherence", "on_object"])
-        warnings = [m for m in cm.output if "WARNING" in m]
-        assert warnings == []
-
-    def test_initial_internal_state(self):
-        sm = make_module()
-        assert sm._previous_3d_location is None
-        assert sm._tangent_frame is None
-        nptest.assert_array_equal(sm._previous_2d_location, np.zeros(2))
-
-
-# ---------------------------------------------------------------------------
-# TestExtract2dEdge
-# ---------------------------------------------------------------------------
-
-
-class TestExtract2dEdge(unittest.TestCase):
-    def setUp(self):
-        self.sm = make_module()
-        self.rgba = np.zeros((64, 64, 4), dtype=np.uint8)
-        self.world_camera = np.eye(4)
-        self.depth = np.ones((64, 64), dtype=np.float32)
-
-    def _base_state(self, **morph_overrides):
-        morph = {"pose_vectors": np.eye(3), "pose_fully_defined": False}
-        morph.update(morph_overrides)
-        return make_message(morphological_features=morph)
-
-    def test_no_pose_vectors_returns_unchanged(self):
-        state = make_message(
-            morphological_features={"pose_fully_defined": False},
-            use_state=False,
-        )
-        result = self.sm._extract_2d_edge(state, self.rgba, self.world_camera)
-        assert result is state
-
-    @patch(f"{MODULE_PATH}.is_geometric_edge", return_value=True)
-    @patch(
-        f"{MODULE_PATH}.compute_edge_features",
-        return_value=(0.5, 0.8, 1.0),
+def make_no_edge() -> EdgeFeatures:
+    return EdgeFeatures(
+        angle=None, strength=0.0, coherence=0.0, is_geometric_edge=False, has_edge=False
     )
-    def test_geometric_edge_filtered_out(self, _mock_compute, _mock_geo):  # noqa: PT019
-        state = self._base_state()
-        result = self.sm._extract_2d_edge(
-            state, self.rgba, self.world_camera, depth_image=self.depth
-        )
-        assert result is state
 
-    @patch(
-        f"{MODULE_PATH}.compute_edge_features",
-        return_value=(0.01, 0.9, 0.5),
+
+def make_raw_observation(
+    *, center_location: np.ndarray, semantic_id: int
+) -> SensorObservation:
+    obs = sensor_observation(angle=None, world_camera=np.identity(4))
+
+    semantic_3d = np.zeros((PATCH_SIZE * PATCH_SIZE, 4), dtype=np.float64)
+    semantic_3d[:, :3] = center_location
+    semantic_3d[:, 3] = semantic_id
+
+    obs.update(
+        semantic_3d=semantic_3d,
+        sensor_frame_data=None,
     )
-    def test_below_strength_threshold(self, _mock_compute):  # noqa: PT019
-        state = self._base_state()
-        result = self.sm._extract_2d_edge(state, self.rgba, self.world_camera)
-        assert not state.morphological_features["pose_fully_defined"]
-        assert result is state
+    return obs
 
-    @patch(
-        f"{MODULE_PATH}.compute_edge_features",
-        return_value=(0.5, 0.1, 0.5),
+
+def make_2d_sm(
+    *,
+    sensor_module_id: str = "test",
+    features: list[str] | None = None,
+    save_raw_obs: bool = False,
+    pc1_is_pc2_threshold: int = 10,
+    is_surface_sm: bool = False,
+    edge_detector: Callable[..., EdgeFeatures] | None = None,
+    noise_params: dict[str, Any] | None = None,
+    delta_thresholds: dict[str, Any] | None = None,
+) -> TwoDSensorModule:
+    if features is None:
+        features = DEFAULT_FEATURES.copy()
+
+    return TwoDSensorModule(
+        sensor_module_id=sensor_module_id,
+        features=features,
+        save_raw_obs=save_raw_obs,
+        pc1_is_pc2_threshold=pc1_is_pc2_threshold,
+        is_surface_sm=is_surface_sm,
+        edge_detector=edge_detector,
+        noise_params=noise_params,
+        delta_thresholds=delta_thresholds,
     )
-    def test_below_coherence_threshold(self, _mock_compute):  # noqa: PT019
-        state = self._base_state()
-        result = self.sm._extract_2d_edge(state, self.rgba, self.world_camera)
-        assert not state.morphological_features["pose_fully_defined"]
-        assert result is state
 
-    @patch(
-        f"{MODULE_PATH}.edge_angle_to_2d_pose",
-        return_value=np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]], dtype=float),
-    )
-    @patch(f"{MODULE_PATH}.is_geometric_edge", return_value=False)
-    @patch(
-        f"{MODULE_PATH}.compute_edge_features",
-        return_value=(0.5, 0.8, 0.7),
-    )
-    def test_successful_edge_updates_pose(self, _mc, _mg, _mt):  # noqa: PT019
-        state = self._base_state()
-        result = self.sm._extract_2d_edge(
-            state, self.rgba, self.world_camera, depth_image=self.depth
+
+class TwoDSensorModuleInitTest(unittest.TestCase):
+    def test_first_observation_initializes_2d_location_from_world_xy(self) -> None:
+        two_d_sm = make_2d_sm(edge_detector=Mock(return_value=make_no_edge()))
+        world_location = np.array([1.0, 2.0, 3.0])
+        percept = make_message(
+            location=world_location.copy(), on_object=True, use_state=True
         )
-        assert result.morphological_features["pose_fully_defined"]
-        pose = result.morphological_features["pose_vectors"]
-        # Row 0: normal always [0,0,1] in 2D plane
-        nptest.assert_allclose(pose[0], [0, 0, 1], atol=1e-7)
-        # Row 1: edge tangent in xy-plane
-        nptest.assert_allclose(pose[1], [0, 1, 0], atol=1e-7)
-        # Row 2: edge perp in xy-plane
-        nptest.assert_allclose(pose[2], [-1, 0, 0], atol=1e-7)
-        assert result.non_morphological_features["edge_strength"] == pytest.approx(0.5)
-        assert result.non_morphological_features["coherence"] == pytest.approx(0.8)
+        two_d_sm._observation_processor.process = Mock(return_value=percept)
 
-    @patch(f"{MODULE_PATH}.edge_angle_to_2d_pose", return_value=np.eye(3))
-    @patch(f"{MODULE_PATH}.is_geometric_edge", return_value=False)
-    @patch(
-        f"{MODULE_PATH}.compute_edge_features",
-        return_value=(0.5, 0.8, 0.7),
-    )
-    def test_strips_alpha_channel(self, mock_compute, _mg, _mt):  # noqa: PT019
-        state = self._base_state()
-        rgba_4ch = np.zeros((32, 32, 4), dtype=np.uint8)
-        self.sm._extract_2d_edge(
-            state, rgba_4ch, self.world_camera, depth_image=self.depth
-        )
-        patch_arg = mock_compute.call_args[0][0]
-        assert patch_arg.shape[2] == 3
-
-    @patch(f"{MODULE_PATH}.is_geometric_edge")
-    @patch(f"{MODULE_PATH}.edge_angle_to_2d_pose", return_value=np.eye(3))
-    @patch(
-        f"{MODULE_PATH}.compute_edge_features",
-        return_value=(0.5, 0.8, 0.7),
-    )
-    def test_no_depth_skips_geometric_check(self, _mc, _mt, mock_geo):  # noqa: PT019
-        state = self._base_state()
-        self.sm._extract_2d_edge(state, self.rgba, self.world_camera, depth_image=None)
-        mock_geo.assert_not_called()
-
-    @patch(
-        f"{MODULE_PATH}.compute_edge_features",
-        return_value=(0.5, 0.8, np.pi / 4),
-    )
-    def test_edge_pose_uses_2d_rotation(self, _mc):  # noqa: PT019
-        """Verify edge_angle_to_2d_pose is called with orientation and camera."""
-        state = self._base_state()
-        with patch(f"{MODULE_PATH}.edge_angle_to_2d_pose") as mock_pose:
-            s2 = np.sqrt(2) / 2
-            mock_pose.return_value = np.array([[0, 0, 1], [s2, s2, 0], [-s2, s2, 0]])
-            result = self.sm._extract_2d_edge(state, self.rgba, self.world_camera)
-            mock_pose.assert_called_once_with(np.pi / 4, self.world_camera)
-        assert result.morphological_features["pose_fully_defined"]
-        nptest.assert_allclose(
-            result.morphological_features["pose_vectors"][0], [0, 0, 1], atol=1e-7
+        msg = two_d_sm.step(
+            ctx=RuntimeContext(rng=np.random.RandomState()),
+            observation=sentinel.raw_observation,
+            motor_only_step=False,
         )
 
-    @patch(f"{MODULE_PATH}.edge_angle_to_2d_pose", return_value=np.eye(3))
-    @patch(
-        f"{MODULE_PATH}.compute_edge_features",
-        return_value=(0.5, 0.8, 0.7),
-    )
-    def test_omits_features_not_in_list(self, _mc, _mt):  # noqa: PT019
-        sm = make_module(features=["coherence", "on_object"])
-        state = self._base_state()
-        result = sm._extract_2d_edge(state, self.rgba, self.world_camera)
-        assert "edge_strength" not in result.non_morphological_features
-        assert "coherence" in result.non_morphological_features
+        np.testing.assert_allclose(msg.location, [1.0, 2.0, 0.0])
+        np.testing.assert_allclose(two_d_sm._previous_2d_location, [1.0, 2.0])
+        np.testing.assert_allclose(two_d_sm._previous_3d_location, world_location)
 
+    def test_like_how_monty_uses_two_d_sm(self) -> None:
+        """Mimic how Monty might use SMs in aggregate_sensory_inputs().
 
-# ---------------------------------------------------------------------------
-# TestUpdate2dPositionAndDisplacement
-# ---------------------------------------------------------------------------
-
-
-class TestUpdate2dPositionAndDisplacement(unittest.TestCase):
-    def setUp(self):
-        self.sm = make_module()
-
-    def _make_mock_tangent_frame(self):
-        frame = MagicMock()
-        frame.basis_u = np.array([1.0, 0.0, 0.0])
-        frame.basis_v = np.array([0.0, 1.0, 0.0])
-        frame.transport = MagicMock()
-        return frame
-
-    def test_off_object_zero_displacement(self):
-        state = make_message(
-            morphological_features={
-                "pose_vectors": np.eye(3),
-                "pose_fully_defined": False,
-                "on_object": False,
-            }
+        This calls update_state() before step().
+        """
+        edge_detector = Mock(return_value=make_no_edge())
+        two_d_sm = make_2d_sm(
+            features=DEFAULT_FEATURES,
+            edge_detector=edge_detector,
         )
-        result = self.sm._update_2d_position_and_displacement(state, None, None)
-        nptest.assert_array_equal(result.displacement["displacement"], np.zeros(3))
-
-    def test_first_obs_initializes_from_world_xy(self):
-        state = make_message(location=np.array([4.0, 5.0, 6.0]))
-        self.sm._previous_3d_location = None
-        sn = state.get_surface_normal()
-
-        result = self.sm._update_2d_position_and_displacement(state, None, sn)
-        nptest.assert_array_equal(result.location, [4.0, 5.0, 0.0])
-        nptest.assert_array_equal(self.sm._previous_2d_location, [4.0, 5.0])
-        assert self.sm._tangent_frame is not None
-
-    def test_zero_tangent_displacement(self):
-        loc = np.array([1.0, 2.0, 3.0])
-        self.sm._previous_3d_location = loc.copy()
-        self.sm._previous_2d_location = np.array([1.0, 2.0])
-        self.sm._tangent_frame = self._make_mock_tangent_frame()
-
-        state = make_message(location=loc.copy())
-        sn = state.get_surface_normal()
-        result = self.sm._update_2d_position_and_displacement(state, None, sn)
-        nptest.assert_array_equal(result.displacement["displacement"], np.zeros(3))
-        nptest.assert_array_equal(result.location, [1.0, 2.0, 0.0])
-
-    def test_displacement_without_curvature(self):
-        self.sm._previous_3d_location = np.array([0.0, 0.0, 0.0])
-        self.sm._previous_2d_location = np.array([0.0, 0.0])
-        self.sm._tangent_frame = self._make_mock_tangent_frame()
-
-        pose = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], dtype=float)
-        state = make_message(
-            location=np.array([0.3, 0.4, 0.0]),
-            morphological_features={
-                "pose_vectors": pose,
-                "pose_fully_defined": False,
-            },
+        agent_state = make_agent_state(sensor_module_id=two_d_sm.sensor_module_id)
+        obs = make_raw_observation(
+            center_location=np.array([1, 2, 3]),
+            semantic_id=1,
         )
-        sn = state.get_surface_normal()
-        result = self.sm._update_2d_position_and_displacement(
-            state, curvature_pose_vectors=None, surface_normal=sn
-        )
-        nptest.assert_allclose(
-            result.displacement["displacement"], [0.3, 0.4, 0.0], atol=1e-10
-        )
-        nptest.assert_allclose(result.location, [0.3, 0.4, 0.0], atol=1e-10)
+        ctx = RuntimeContext(rng=np.random.RandomState())
 
-    @patch(
-        f"{MODULE_PATH}.arc_length_corrected_displacement", return_value=(0.35, 0.45)
-    )
-    def test_displacement_with_arc_length_correction(self, mock_arc):
-        self.sm._previous_3d_location = np.array([0.0, 0.0, 0.0])
-        self.sm._previous_2d_location = np.array([0.0, 0.0])
-        self.sm._tangent_frame = self._make_mock_tangent_frame()
+        two_d_sm.update_state(agent_state)
+        msg = two_d_sm.step(ctx, obs, motor_only_step=False)
 
-        pose = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], dtype=float)
-        curvature_pv = pose.copy()
-        state = make_message(
-            location=np.array([0.3, 0.4, 0.0]),
-            morphological_features={
-                "pose_vectors": pose,
-                "pose_fully_defined": False,
-                "principal_curvatures": np.array([0.1, 0.2]),
-            },
-        )
-        sn = state.get_surface_normal()
-        result = self.sm._update_2d_position_and_displacement(
-            state, curvature_pose_vectors=curvature_pv, surface_normal=sn
-        )
-        mock_arc.assert_called_once()
-        nptest.assert_allclose(
-            result.displacement["displacement"], [0.35, 0.45, 0.0], atol=1e-10
+        assert two_d_sm.state is not None
+        assert two_d_sm.states[-1] is two_d_sm.state
+
+        assert msg.sender_id == two_d_sm.sensor_module_id
+        assert msg.sender_type == "SM"
+        assert msg.confidence == 1.0
+        assert isinstance(msg.use_state, bool)
+
+        assert msg.location.shape == (3,)
+        assert msg.morphological_features["pose_vectors"].shape == (3, 3)
+        assert isinstance(msg.morphological_features["pose_fully_defined"], bool)
+
+
+class TwoDSensorModuleEdgeTest(unittest.TestCase):
+    def test_default_edge_detector_is_used_when_edge_features_requested(self):
+        two_d_sm = make_2d_sm(
+            sensor_module_id="test",
+            features=DEFAULT_FEATURES,
         )
 
-    def test_displacement_accumulates(self):
-        self.sm._previous_3d_location = np.array([0.0, 0.0, 0.0])
-        self.sm._previous_2d_location = np.array([0.0, 0.0])
-        self.sm._tangent_frame = self._make_mock_tangent_frame()
-
-        pose = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], dtype=float)
-        state1 = make_message(
-            location=np.array([1.0, 0.0, 0.0]),
-            morphological_features={
-                "pose_vectors": pose.copy(),
-                "pose_fully_defined": False,
-            },
-        )
-        sn1 = state1.get_surface_normal()
-        self.sm._update_2d_position_and_displacement(state1, None, sn1)
-
-        state2 = make_message(
-            location=np.array([1.0, 2.0, 0.0]),
-            morphological_features={
-                "pose_vectors": pose.copy(),
-                "pose_fully_defined": False,
-            },
-        )
-        sn2 = state2.get_surface_normal()
-        result = self.sm._update_2d_position_and_displacement(state2, None, sn2)
-        nptest.assert_allclose(self.sm._previous_2d_location, [1.0, 2.0], atol=1e-10)
-        nptest.assert_allclose(result.location, [1.0, 2.0, 0.0], atol=1e-10)
-
-    def test_z_always_zero(self):
-        self.sm._previous_3d_location = np.array([0.0, 0.0, 0.0])
-        self.sm._previous_2d_location = np.array([0.0, 0.0])
-        self.sm._tangent_frame = self._make_mock_tangent_frame()
-
-        pose = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], dtype=float)
-        state = make_message(
+        percept = make_message(
             location=np.array([1.0, 2.0, 3.0]),
-            morphological_features={
-                "pose_vectors": pose,
-                "pose_fully_defined": False,
-            },
+            on_object=True,
+            use_state=True,
+            pose_vectors=np.identity(3),
+            pose_fully_defined=False,
+            sender_id="test",
         )
-        sn = state.get_surface_normal()
-        result = self.sm._update_2d_position_and_displacement(state, None, sn)
-        assert result.location[2] == 0.0
+        two_d_sm._observation_processor.process = Mock(return_value=percept)
 
-    @given(loc=a_3d_location)
-    def test_z_always_zero_property(self, loc):
-        self.sm._previous_3d_location = np.zeros(3)
-        self.sm._previous_2d_location = np.zeros(2)
-        self.sm._tangent_frame = self._make_mock_tangent_frame()
-        state = make_message(
-            location=loc,
-            morphological_features={"pose_vectors": _FLAT_POSE, "pose_fully_defined": False},
+        raw_observation = make_raw_observation(
+            center_location=np.array([1.0, 2.0, 3.0]),
+            semantic_id=1,
         )
-        result = self.sm._update_2d_position_and_displacement(
-            state, None, state.get_surface_normal()
+
+        msg = two_d_sm.step(
+            ctx=RuntimeContext(rng=np.random.RandomState()),
+            observation=raw_observation,
+            motor_only_step=False,
         )
-        assert result.location[2] == 0.0
 
-    @given(loc=a_3d_location)
-    def test_zero_displacement_when_stationary_property(self, loc):
-        self.sm._previous_3d_location = loc.copy()
-        self.sm._previous_2d_location = loc[:2].copy()
-        self.sm._tangent_frame = self._make_mock_tangent_frame()
-        state = make_message(
-            location=loc.copy(),
-            morphological_features={"pose_vectors": _FLAT_POSE, "pose_fully_defined": False},
+        assert msg.sender_id == "test"
+        assert msg.sender_type == "SM"
+
+    def test_edge_detector_not_required_when_edge_features_not_requested(self):
+        two_d_sm = TwoDSensorModule(
+            sensor_module_id="test",
+            features=[
+                feature
+                for feature in DEFAULT_FEATURES
+                if feature not in {"edge_strength", "coherence"}
+            ],
         )
-        result = self.sm._update_2d_position_and_displacement(
-            state, None, state.get_surface_normal()
+        percept = make_message(
+            location=np.array([1.0, 2.0, 3.0]),
+            on_object=True,
+            use_state=True,
+            pose_vectors=FLAT_SURFACE_POSE,
+            pose_fully_defined=False,
+            sender_id="test",
         )
-        nptest.assert_array_equal(result.displacement["displacement"], np.zeros(3))
+        two_d_sm._observation_processor.process = Mock(return_value=percept)
+
+        msg = two_d_sm.step(
+            ctx=RuntimeContext(rng=np.random.RandomState()),
+            observation=sentinel.raw_observation,
+            motor_only_step=False,
+        )
+
+        assert msg.sender_id == "test"
+        assert msg.sender_type == "SM"
+        assert msg.morphological_features["pose_fully_defined"] is False
+
+    def test_extract_2d_edge_sets_edge_pose_and_features(self):
+        observation = make_raw_observation(
+            center_location=np.zeros(3),
+            semantic_id=1,
+        )
+        edge_detector = Mock(
+            return_value=EdgeFeatures(
+                angle=np.pi / 2,
+                strength=2.5,
+                coherence=0.75,
+                is_geometric_edge=False,
+                has_edge=True,
+            )
+        )
+        two_d_sm = make_2d_sm(edge_detector=edge_detector)
+        two_d_sm._update_tangent_frame(surface_normal_3d=SURFACE_NORMAL_3D)
+        percept = make_message()
+
+        msg = two_d_sm._extract_2d_edge(
+            percept, observation, surface_normal_3d=SURFACE_NORMAL_3D
+        )
+
+        assert msg.morphological_features["pose_fully_defined"] is True
+
+        np.testing.assert_allclose(
+            msg.morphological_features["pose_vectors"],
+            np.array(
+                [
+                    [0.0, 0.0, 1.0],
+                    [0.0, -1.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                ]
+            ),
+            atol=DEFAULT_TOLERANCE,
+        )
+
+        assert msg.non_morphological_features["edge_strength"] == 2.5
+        assert msg.non_morphological_features["coherence"] == 0.75
+
+        edge_detector.assert_called_once_with(observation)
+
+    def test_extract_2d_edge_ignores_no_edge(self):
+        observation = make_raw_observation(
+            center_location=np.zeros(3),
+            semantic_id=1,
+        )
+        edge_detector = Mock(return_value=make_no_edge())
+        two_d_sm = make_2d_sm(edge_detector=edge_detector)
+        two_d_sm._update_tangent_frame(surface_normal_3d=SURFACE_NORMAL_3D)
+        percept = make_message()
+        original_pose = percept.morphological_features["pose_vectors"].copy()
+
+        msg = two_d_sm._extract_2d_edge(percept, observation, SURFACE_NORMAL_3D)
+
+        assert msg.morphological_features["pose_fully_defined"] is False
+        np.testing.assert_allclose(
+            msg.morphological_features["pose_vectors"], original_pose
+        )
+
+    def test_extract_2d_edge_ignores_geometric_edge(self):
+        observation = make_raw_observation(
+            center_location=np.zeros(3),
+            semantic_id=1,
+        )
+        edge_detector = Mock(
+            return_value=EdgeFeatures(
+                angle=np.pi / 2,
+                strength=2.5,
+                coherence=0.75,
+                is_geometric_edge=True,
+                has_edge=True,
+            )
+        )
+        two_d_sm = make_2d_sm(edge_detector=edge_detector)
+        two_d_sm._update_tangent_frame(surface_normal_3d=SURFACE_NORMAL_3D)
+        percept = make_message()
+        original_pose = percept.morphological_features["pose_vectors"].copy()
+
+        msg = two_d_sm._extract_2d_edge(percept, observation, SURFACE_NORMAL_3D)
+
+        assert msg.morphological_features["pose_fully_defined"] is False
+        np.testing.assert_allclose(
+            msg.morphological_features["pose_vectors"], original_pose
+        )
+        assert "edge_strength" not in msg.non_morphological_features
+        assert "coherence" not in msg.non_morphological_features
 
 
-# ---------------------------------------------------------------------------
-# TestPreEpisode
-# ---------------------------------------------------------------------------
+class TwoDSensorModuleTangentFrameTest(unittest.TestCase):
+    def test_tangent_frame_transported_not_recreated(self):
+        two_d_sm = make_2d_sm(edge_detector=Mock(return_value=make_no_edge()))
+        first_normal = np.array([0.0, 0.0, 1.0])
+        second_normal = np.array([0.0, np.sqrt(0.5), np.sqrt(0.5)])
 
+        first_pose = np.array(
+            [
+                first_normal,
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ]
+        )
+        second_pose = np.array(
+            [
+                second_normal,
+                [1.0, 0.0, 0.0],
+                [0.0, np.sqrt(0.5), -np.sqrt(0.5)],
+            ]
+        )
 
-class TestPreEpisode(unittest.TestCase):
-    def setUp(self):
-        self.sm = make_module()
+        two_d_sm._observation_processor.process = Mock(
+            side_effect=[
+                make_message(
+                    location=np.array([0.0, 0.0, 0.0]),
+                    pose_vectors=first_pose,
+                    on_object=True,
+                    use_state=True,
+                ),
+                make_message(
+                    location=np.array([1.0, 0.0, 0.0]),
+                    pose_vectors=second_pose,
+                    on_object=True,
+                    use_state=True,
+                ),
+            ]
+        )
 
-    def test_resets_state_tracking(self):
-        self.sm._previous_3d_location = np.array([1.0, 2.0, 3.0])
-        self.sm._tangent_frame = object()
-        self.sm._previous_2d_location = np.array([1.0, 2.0])
-        self.sm.pre_episode()
-        assert self.sm._previous_3d_location is None
-        assert self.sm._tangent_frame is None
-        nptest.assert_array_equal(self.sm._previous_2d_location, np.zeros(2))
+        ctx = RuntimeContext(rng=np.random.RandomState())
+        two_d_sm.step(
+            ctx=ctx,
+            observation=sentinel.raw_observation,
+            motor_only_step=False,
+        )
+        tangent_frame_after_first_step = two_d_sm._tangent_frame
 
-    def test_clears_observations(self):
-        self.sm.processed_obs = [{"x": 1}]
-        self.sm.states = [object()]
-        self.sm.pre_episode()
-        assert self.sm.processed_obs == []
-        assert self.sm.states == []
+        two_d_sm.step(
+            ctx=ctx, observation=sentinel.raw_observation, motor_only_step=False
+        )
+        tangent_frame_after_second_step = two_d_sm._tangent_frame
 
-    def test_clears_exploring_flag(self):
-        self.sm.is_exploring = True
-        self.sm.pre_episode()
-        assert not self.sm.is_exploring
+        assert tangent_frame_after_second_step is tangent_frame_after_first_step
+        np.testing.assert_allclose(
+            two_d_sm._tangent_frame.normal,
+            second_normal,
+            atol=DEFAULT_TOLERANCE,
+        )
+
+    def test_multi_step_2d_position_accumulated_on_flat_surface(self):
+        two_d_sm = make_2d_sm(edge_detector=Mock(return_value=make_no_edge()))
+        ctx = RuntimeContext(rng=np.random.RandomState())
+
+        locations = [
+            np.array([1.0, 2.0, 0.0]),
+            np.array([2.0, 2.0, 0.0]),
+            np.array([2.0, 4.0, 0.0]),
+        ]
+
+        messages = [
+            make_message(
+                location=location.copy(),
+                on_object=True,
+                use_state=True,
+                pose_vectors=FLAT_SURFACE_POSE,
+            )
+            for location in locations
+        ]
+        two_d_sm._observation_processor.process = Mock(side_effect=messages)
+
+        outputs = [
+            two_d_sm.step(ctx, sentinel.raw_observation, motor_only_step=False)
+            for _ in messages
+        ]
+
+        np.testing.assert_allclose(two_d_sm._previous_2d_location, [2.0, 4.0])
+        np.testing.assert_allclose(two_d_sm._previous_3d_location, [2.0, 4.0, 0.0])
+
+        np.testing.assert_allclose(outputs[0].location, [1.0, 2.0, 0.0])
+        np.testing.assert_allclose(outputs[1].location, [2.0, 2.0, 0.0])
+        np.testing.assert_allclose(outputs[2].location, [2.0, 4.0, 0.0])
+        np.testing.assert_allclose(
+            outputs[1].displacement["displacement"], [1.0, 0.0, 0.0]
+        )
+        np.testing.assert_allclose(
+            outputs[2].displacement["displacement"], [0.0, 2.0, 0.0]
+        )

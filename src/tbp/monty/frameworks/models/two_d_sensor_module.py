@@ -17,7 +17,10 @@ import quaternion as qt
 
 from tbp.monty.cmp import Message
 from tbp.monty.context import RuntimeContext
-from tbp.monty.frameworks.models.abstract_monty_classes import SensorModule
+from tbp.monty.frameworks.models.abstract_monty_classes import (
+    SensorModule,
+    SensorObservation,
+)
 from tbp.monty.frameworks.models.motor_system_state import (
     AgentState,
     SensorState,
@@ -34,18 +37,18 @@ from tbp.monty.frameworks.models.sensor_modules import (
 )
 from tbp.monty.frameworks.sensors import SensorID
 from tbp.monty.frameworks.utils.edge_detection import (
-    EdgeDetectionConfig,
-    compute_edge_features,
-    edge_angle_to_2d_pose,
-    is_geometric_edge,
+    EdgeDetector,
+    _angle_to_pose_2d,
 )
 from tbp.monty.frameworks.utils.sensor_processing import (
     arc_length_corrected_displacement,
 )
 from tbp.monty.frameworks.utils.spatial_arithmetics import (
     TangentFrame,
+    normalize,
     project_onto_tangent_plane,
 )
+from tbp.monty.math import DEFAULT_TOLERANCE
 
 logger = logging.getLogger(__name__)
 
@@ -56,12 +59,20 @@ class TwoDSensorModule(SensorModule):
     Extends the base sensor module to detect edges on an object's surface (e.g.
     edges of a logo on a cup) and enable an associated LM to build a
     corresponding 2D model of the 3D object. Movements in 2D are estimated by
-    unrolling the 3D surface into a
-    local tangent plane, which requires extracting surface normals and principal
-    curvatures at each observation point to perform the projection correctly.
+    unrolling the 3D surface into a local tangent plane, which requires extracting
+    surface normals and principal curvatures at each observation point to perform
+    the projection correctly.
 
     The 2D position is initialized to the world x,y coordinates. A 2D model is
     built by accumulating tangent plane displacements.
+
+    Note:
+        This implementation represents the 2D model in the world xy-plane
+        by setting z to zero and initializing 2D position from world x/y.
+        This is appropriate when the relevant camera or object-facing projection
+        is aligned with world xy. It will be incorrect for views whose image
+        plane is not aligned with world xy, for example a camera looking along
+        the x-axis, where the visible plane is closer to yz.
     """
 
     def __init__(
@@ -71,7 +82,7 @@ class TwoDSensorModule(SensorModule):
         save_raw_obs: bool = False,
         pc1_is_pc2_threshold: int = 10,
         is_surface_sm: bool = False,
-        edge_detection_config: EdgeDetectionConfig | None = None,
+        edge_detector: EdgeDetector | None = None,
         noise_params: dict[str, Any] | None = None,
         delta_thresholds: dict[str, Any] | None = None,
     ):
@@ -87,8 +98,7 @@ class TwoDSensorModule(SensorModule):
             is_surface_sm: Surface SMs do not require that the central pixel is
                 "on object" in order to process the observation (i.e., extract
                 features). Defaults to False.
-            edge_detection_config: Configuration for structure-tensor edge
-                detection. If None, uses EdgeDetectionConfig defaults.
+            edge_detector: Feature extractor for edges.
             noise_params: Dictionary of noise amount for each feature.
             delta_thresholds: If given, a FeatureChangeFilter will be used to
                 check whether the current state's features are significantly different
@@ -115,25 +125,24 @@ class TwoDSensorModule(SensorModule):
             self._percept_filter = PassthroughPerceptFilter()
         self._snapshot_telemetry = SnapshotTelemetry()
 
+        self._extract_edges = any(
+            feature in features for feature in ("edge_strength", "coherence")
+        )
+        if self._extract_edges and edge_detector is None:
+            edge_detector = EdgeDetector()
+
         self.features = features
         self.processed_obs = []
         self.states = []
         self.sensor_module_id = sensor_module_id
         self.save_raw_obs = save_raw_obs
-        self.edge_detection_config = edge_detection_config or EdgeDetectionConfig()
-
-        edge_features = {"edge_strength", "coherence"}
-        missing = edge_features - set(features)
-        if missing:
-            logger.warning(
-                f"TwoDSensorModule '{sensor_module_id}' does not include {missing} "
-                f"in its features list. Edge features will not appear in "
-                f"observations."
-            )
+        self.edge_detector = edge_detector
+        self.is_exploring = False
+        self.state: SensorState | None = None
 
         self._previous_3d_location: np.ndarray | None = None
-        self._tangent_frame: TangentFrame | None = None
         self._previous_2d_location: np.ndarray = np.zeros(2)
+        self._tangent_frame: TangentFrame | None = None
 
     def pre_episode(self) -> None:
         self._snapshot_telemetry.reset()
@@ -142,8 +151,8 @@ class TwoDSensorModule(SensorModule):
         self.processed_obs = []
         self.states = []
         self._previous_3d_location = None
-        self._tangent_frame = None
         self._previous_2d_location = np.zeros(2)
+        self._tangent_frame = None
 
     def update_state(self, agent: AgentState):
         """Update information about the sensor's location and rotation."""
@@ -159,12 +168,17 @@ class TwoDSensorModule(SensorModule):
         state_dict.update(processed_observations=self.processed_obs)
         return state_dict
 
-    def step(self, ctx: RuntimeContext, data, motor_only_step: bool = False) -> Message:
+    def step(
+        self,
+        ctx: RuntimeContext,
+        observation: SensorObservation,
+        motor_only_step: bool = False,
+    ) -> Message:
         """Turn raw observations into dict of features at location.
 
         Args:
             ctx: The runtime context.
-            data: Raw observations.
+            observation: Raw observations.
             motor_only_step: If True, mark the resulting Message as not to be
                 passed to an LM.
 
@@ -172,48 +186,27 @@ class TwoDSensorModule(SensorModule):
             Message with features and morphological features. Noise may be added.
             use_state flag may be set.
         """
-        if self.save_raw_obs and not self.is_exploring:
+        if self.state and self.save_raw_obs and not self.is_exploring:
             self._snapshot_telemetry.raw_observation(
-                data, self.state.rotation, self.state.position
+                observation, self.state.rotation, self.state.position
             )
 
-        # TODO: Consider a FeatureRegistry to replace the two-step
-        # process() + _extract_2d_edge() pipeline.
+        observed_state = self._observation_processor.process(observation)
 
-        observed_state = self._observation_processor.process(data)
-
-        curvature_pose_vectors = observed_state.morphological_features.get(
-            "pose_vectors"
-        )
-        if curvature_pose_vectors is not None:
-            curvature_pose_vectors = curvature_pose_vectors.copy()
-
-        true_surface_normal = observed_state.get_surface_normal()
-        if true_surface_normal is not None:
-            true_surface_normal = true_surface_normal.copy()
+        curvature_pose_vectors = observed_state.get_pose_vectors().copy()
+        true_surface_normal = observed_state.get_surface_normal().copy()
 
         # Only edges define pose for 2D sensor; reset curvature-based flag.
-        if "pose_fully_defined" in observed_state.morphological_features:
-            observed_state.morphological_features["pose_fully_defined"] = False
+        observed_state.morphological_features["pose_fully_defined"] = False
 
         if observed_state.use_state and observed_state.get_on_object():
-            observed_state = self._extract_2d_edge(
-                observed_state,
-                data["rgba"],
-                data["world_camera"],
-                depth_image=data.get("depth"),
-            )
-
-        # Replace 3D curvature pose with flat 2D basis when no edge was detected.
-        if (
-            "pose_vectors" in observed_state.morphological_features
-            and not observed_state.morphological_features.get(
-                "pose_fully_defined", False
-            )
-        ):
-            observed_state.morphological_features["pose_vectors"] = np.array(
-                [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
-            )
+            self._update_tangent_frame(true_surface_normal)
+            if self._extract_edges:
+                observed_state = self._extract_2d_edge(
+                    observed_state,
+                    observation,
+                    true_surface_normal,
+                )
 
         if observed_state.use_state:
             observed_state = self._message_noise(observed_state, rng=ctx.rng)
@@ -238,9 +231,8 @@ class TwoDSensorModule(SensorModule):
     def _extract_2d_edge(
         self,
         state: Message,
-        rgba_image: np.ndarray,
-        world_camera: np.ndarray,
-        depth_image: np.ndarray | None = None,
+        observation: SensorObservation,
+        surface_normal_3d: np.ndarray,
     ) -> Message:
         """Extract 2D edge-based pose if edge is detected.
 
@@ -249,76 +241,67 @@ class TwoDSensorModule(SensorModule):
 
         Args:
             state: Message with standard features from ObservationProcessor
-            rgba_image: RGBA image patch
-            world_camera: World to camera transformation matrix
-            depth_image: Optional depth image patch for filtering geometric edges.
-                If provided, edges at depth discontinuities (object boundaries,
-                surface creases) are filtered out, keeping only texture edges.
+            observation: Sensor observation.
+            surface_normal_3d: True surface normal from curvature estimation,
+                saved before edge detection may overwrite pose_vectors.
 
         Returns:
             Message with edge-based pose vectors if edge detected,
             otherwise returns the original state unchanged.
+
+        Raises:
+            RuntimeError: If edge features were requested but no edge detector
+                is configured.
         """
-        if "pose_vectors" not in state.morphological_features:
-            return state
-
-        if rgba_image.shape[2] == 4:
-            patch = rgba_image[:, :, :3]
-        else:
-            patch = rgba_image
-
-        edge_strength, coherence, edge_orientation = (
-            compute_edge_features(
-                patch,
-                edge_detection_config=self.edge_detection_config,
+        if self.edge_detector is None:
+            raise RuntimeError(
+                "edge_detector is required when edge_strength or coherence is in "
+                "features."
             )
-        )
 
-        if (
-            edge_strength > 0
-            and depth_image is not None
-            and is_geometric_edge(
-                depth_image,
-                edge_orientation,
-                self.edge_detection_config.depth_edge_threshold,
-            )
-        ):
+        edge = self.edge_detector(observation)
+
+        if not edge.has_edge or (edge.strength and edge.is_geometric_edge):
             return state
 
-        strength_threshold = self.edge_detection_config.strength_threshold
-        coherence_threshold = self.edge_detection_config.coherence_threshold
-        has_edge = (edge_strength > strength_threshold) and (
-            coherence > coherence_threshold
+        pose_2d = _angle_to_pose_2d(
+            edge.angle,
+            observation["world_camera"],
+            surface_normal=surface_normal_3d,
+            tangent_frame=self._tangent_frame,
         )
 
-        if not has_edge:
-            return state
-
-        state.morphological_features["pose_vectors"] = edge_angle_to_2d_pose(
-            edge_orientation, world_camera
-        )
+        state.morphological_features["pose_vectors"] = pose_2d
         state.morphological_features["pose_fully_defined"] = True
 
         if "edge_strength" in self.features:
-            state.non_morphological_features["edge_strength"] = edge_strength
+            state.non_morphological_features["edge_strength"] = edge.strength
         if "coherence" in self.features:
-            state.non_morphological_features["coherence"] = coherence
+            state.non_morphological_features["coherence"] = edge.coherence
 
         return state
+
+    def _update_tangent_frame(self, surface_normal_3d: np.ndarray) -> None:
+        """Keep the local 2D frame aligned with the current surface normal."""
+        surface_normal_3d = normalize(surface_normal_3d)
+        if self._tangent_frame is None:
+            self._tangent_frame = TangentFrame(surface_normal_3d)
+        else:
+            self._tangent_frame.transport(surface_normal_3d)
 
     def _update_2d_position_and_displacement(
         self,
         observed_state: Message,
-        curvature_pose_vectors: np.ndarray | None,
-        surface_normal: np.ndarray | None,
+        pose_3d: np.ndarray | None,
+        surface_normal_3d: np.ndarray | None,
     ) -> Message:
         """Project the 3D step onto the tangent plane to get a 2D displacement.
 
         Args:
             observed_state: Message to update with 2D displacement and position.
-            curvature_pose_vectors: Curvature-based pose vectors used for
+            pose_3d: Real pose vectors based on 3D object used for
                 arc-length correction. If None, chord length is used as-is.
-            surface_normal: True surface normal from curvature estimation,
+            surface_normal_3d: True surface normal from curvature estimation,
                 saved before edge detection may overwrite pose_vectors.
 
         Returns:
@@ -330,23 +313,23 @@ class TwoDSensorModule(SensorModule):
 
         current_3d_location = observed_state.location.copy()
 
-        if self._previous_3d_location is None or surface_normal is None:
-            if surface_normal is not None:
-                self._tangent_frame = TangentFrame(surface_normal)
+        if self._previous_3d_location is None or surface_normal_3d is None:
             self._previous_3d_location = current_3d_location
-            # Initialize 2D position to world x,y.
             self._previous_2d_location = current_3d_location[:2].copy()
             observed_state.location = np.array(
+                # Setting z = 0 assumes that camera is aligned with world xy.
                 [current_3d_location[0], current_3d_location[1], 0.0]
             )
             return observed_state
-        displacement_3d = current_3d_location - self._previous_3d_location
-        d_tan = project_onto_tangent_plane(displacement_3d, surface_normal)
 
-        if np.linalg.norm(d_tan) < 1e-12:
-            self._previous_3d_location = current_3d_location.copy()
+        displacement_3d = current_3d_location - self._previous_3d_location
+        d_tan = project_onto_tangent_plane(displacement_3d, surface_normal_3d)
+
+        if np.linalg.norm(d_tan) < DEFAULT_TOLERANCE:
+            self._previous_3d_location = current_3d_location
             observed_state.set_displacement(np.zeros(3))
             observed_state.location = np.array(
+                # See previous comment on setting z = 0.
                 [
                     self._previous_2d_location[0],
                     self._previous_2d_location[1],
@@ -355,25 +338,25 @@ class TwoDSensorModule(SensorModule):
             )
             return observed_state
 
-        self._tangent_frame.transport(surface_normal)
-
-        du = float(np.dot(d_tan, self._tangent_frame.basis_u))
-        dv = float(np.dot(d_tan, self._tangent_frame.basis_v))
+        du = np.dot(d_tan, self._tangent_frame.basis_u)
+        dv = np.dot(d_tan, self._tangent_frame.basis_v)
 
         principal_curvatures = observed_state.morphological_features.get(
             "principal_curvatures"
         )
-        if principal_curvatures is not None and curvature_pose_vectors is not None:
+
+        if principal_curvatures is not None and pose_3d is not None:
             du, dv = arc_length_corrected_displacement(
                 du,
                 dv,
                 self._tangent_frame.basis_u,
                 self._tangent_frame.basis_v,
                 principal_curvatures,
-                curvature_pose_vectors,
+                pose_3d,
             )
 
         self._previous_2d_location += [du, dv]
+        self._previous_3d_location = current_3d_location
         observed_state.set_displacement(np.array([du, dv, 0.0]))
         observed_state.location = np.array(
             [
@@ -382,5 +365,4 @@ class TwoDSensorModule(SensorModule):
                 0.0,
             ]
         )
-        self._previous_3d_location = current_3d_location.copy()
         return observed_state
