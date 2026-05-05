@@ -1,0 +1,4 @@
+interface:
+  display_name: "2D SM Docs"
+  short_description: "Document deep 2D Sensor Module decisions"
+  default_prompt: "Use $2d-sm-docs to document a 2D Sensor Module function, class, or module."
