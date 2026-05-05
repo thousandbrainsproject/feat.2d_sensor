@@ -3,8 +3,12 @@ src/tbp/monty/conf
 !src/tbp/monty/conf/hydra
 
 # 2d_sm_docs
-2d_sm_docs/out
+2d_sm_docs/out/
 2d_sm_docs/imgs
+2d_sm_docs/SCRATCH_PAD.md
+2d_sm_docs/src/*
+!2d_sm_docs/src/
+!2d_sm_docs/src/*.tex
 
 # wandb local configs
 wandb/
