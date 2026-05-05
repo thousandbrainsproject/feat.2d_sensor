@@ -994,4 +994,132 @@ test_transport_preserves_orthonormality
 test_accumulated_transports_stay_orthonormal
 \end{verbatim}
 
+\subsection{\texttt{\_update\_2d\_position\_and\_displacement}}
+
+\textbf{What it does.}
+\texttt{\_update\_2d\_position\_and\_displacement} rewrites the outgoing
+message location and displacement from 3D sensor coordinates into the
+accumulated 2D surface chart. It uses the transported tangent frame to express
+the current 3D step as \((du, dv)\), then stores the result in a 3D-shaped
+message with a dummy zero \(z\) coordinate.
+
+\textbf{Algorithm.}
+\begin{enumerate}
+  \item If the observation is off object, set displacement to \([0, 0, 0]\) and
+        return without changing the saved previous 3D or 2D locations.
+  \item Copy \texttt{observed\_state.location} into
+        \texttt{current\_3d\_location}. This preserves the real 3D position
+        before the method overwrites the outgoing message location with its 2D
+        representation.
+  \item If there is no previous 3D location, seed
+        \texttt{\_previous\_3d\_location} from the current 3D point and seed
+        \texttt{\_previous\_2d\_location} from the current world \(x, y\). Emit
+        location \([x, y, 0]\) and return.
+  \item Compute the 3D displacement from the previous on-object 3D point to the
+        current 3D point, then project that displacement onto the tangent plane
+        of the saved true surface normal.
+  \item If the projected tangent displacement has norm below
+        \texttt{DEFAULT\_TOLERANCE}, update the previous 3D location, emit zero
+        displacement, keep the previous 2D location unchanged, and return.
+  \item Express the tangent displacement in the current transported frame:
+        \[
+          du = d_{\mathrm{tan}} \cdot u,
+          \qquad
+          dv = d_{\mathrm{tan}} \cdot v
+        \]
+        where \(u\) and \(v\) are \texttt{basis\_u} and \texttt{basis\_v}.
+  \item If curvature magnitudes and saved curvature pose vectors are available,
+        pass \((du, dv)\) through \texttt{arc\_length\_corrected\_displacement}
+        so chord-length components become local surface arc lengths.
+  \item Add the final \((du, dv)\) to \texttt{\_previous\_2d\_location}, save
+        the current 3D point as the new previous 3D location, set displacement
+        to \([du, dv, 0]\), and set outgoing location to
+        \([x_{2d}, y_{2d}, 0]\).
+\end{enumerate}
+
+\textbf{Gotchas.}
+The first on-object observation initializes location state but does not emit a
+displacement field. Off-object observations explicitly emit zero displacement,
+and later on-object movement emits \([du, dv, 0]\), but the first contact is a
+seed rather than a movement measurement. Any downstream code that assumes every
+message has a displacement field must handle the first on-object message
+separately.
+
+Off-object observations do not reset \texttt{\_previous\_3d\_location} or
+\texttt{\_previous\_2d\_location}. The next on-object displacement is measured
+from the last on-object 3D point, not from the off-object sample. This preserves
+the last known surface coordinate through brief off-object observations, but a
+large return jump is accumulated as one surface displacement.
+
+The method does not check whether the message should be used as a percept. In
+\texttt{step}, it runs after message noise and after motor-only handling can
+disable percept use. A motor-only message can therefore update the private 2D
+trajectory even though the resulting message is not meant to be used by an LM.
+
+\textbf{Subtle Details.}
+The copy of \texttt{current\_3d\_location} is load-bearing. By the end of the
+method, \texttt{observed\_state.location} no longer contains the real 3D sensor
+location; it contains the accumulated 2D location embedded as \([x, y, 0]\).
+Without the saved copy, later updates to \texttt{\_previous\_3d\_location} would
+accidentally store the rewritten 2D coordinate instead of the observed 3D point.
+
+The near-zero tangent branch updates the previous 3D location but leaves the
+previous 2D location unchanged. This is the right behavior for movement along
+the surface normal or numerical jitter: the sensor has a new 3D reference point
+for the next step, but it has not moved across the unrolled surface chart.
+
+Projection happens before expressing the step in the tangent-frame basis. This
+removes displacement along the surface normal, so \((du, dv)\) measures motion
+within the tangent plane instead of raw Euclidean motion in world coordinates.
+The current \texttt{TangentFrame} basis is then used only as coordinates for
+that already-tangent vector.
+
+\textbf{Limitations.}
+The first 2D location is seeded from world \(x, y\), not from a canonical
+object-intrinsic origin. The accumulated coordinates therefore carry the
+translation and orientation of the first contact convention. They are useful as
+a continuous local chart within an episode, but they are not automatically
+aligned across episodes that start elsewhere on the object.
+
+The outgoing 2D state is encoded as a 3-vector for Monty message compatibility.
+The third coordinate in both location and displacement is fixed at zero and
+does not represent depth, height, curvature, or any other geometric quantity.
+
+The arc-correction branch currently depends on curvature magnitudes being
+present in the morphological feature dictionary. The standard observation
+processor writes that value as a non-morphological feature, so the default path
+uses chord-length \((du, dv)\) unless a caller supplies curvature magnitudes
+where this method currently looks for them.
+
+The method is private and relies on \texttt{step} to update the tangent frame
+before any nonzero on-object displacement is processed. A direct call with a
+previous 3D location but no \texttt{\_tangent\_frame} would fail when accessing
+\texttt{basis\_u} and \texttt{basis\_v}.
+
+\textbf{Alternatives Considered.}
+One alternative is to reset the previous locations whenever the sensor goes
+off object. That would avoid accumulating a large jump when contact resumes,
+but it would also fragment a trajectory whenever the detector briefly loses
+surface contact. The current behavior treats off-object messages as zero-motion
+gaps and preserves the last known surface coordinate.
+
+Another alternative is to emit raw world \(x, y\) on every step. That is simpler
+and matches flat surfaces aligned with the world \(xy\)-plane, but it fails on
+curved surfaces because the visible local surface moves through changing
+tangent planes. Accumulating tangent-frame displacements preserves a continuous
+unrolled chart instead.
+
+Emitting a true 2-vector would make the 2D convention explicit, but it would
+break the existing Monty message contract that locations and displacements are
+3-vectors. The dummy \(z=0\) coordinate keeps the message shape compatible while
+making the 2D reduction local to this sensor module.
+
+\textbf{Relevant tests.}
+\begin{verbatim}
+test_first_observation_initializes_2d_location_from_world_xy
+test_multi_step_2d_position_accumulated_on_flat_surface
+arc_from_projection property tests
+directional_curvature property tests
+\end{verbatim}
+
 \end{document}
