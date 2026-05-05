@@ -36,27 +36,166 @@ Key functions:
   \item \texttt{EdgeDetector.\_is\_geometric\_edge}, \texttt{\_gradient\_to\_tangent\_angle}
 \end{enumerate}
 
-The Problem. This feature was initially posed as a edge detection problem, however, in reality a much more complex problem. While functions that extract surface normal rely on extracting the value at the center of the 64 x64 patch, we are not interested in whether an edge exists at the center, but rather whether there is a dominant edge within the patch and what its orientation is. What constitutes as "dominant" and how much it should be "center-focused"
+\subsection{\texttt{EdgeDetector}}
 
-The same image at different zoom levels can have different edge orientations.
+\textbf{The Problem.}
+This feature was initially posed as an edge detection problem, but the
+actual problem is more specific. The 2D sensor does not only need to know
+whether an edge exists at a single center pixel. It needs to know whether
+there is a dominant edge in the observed $64 \times 64$ patch and, if so,
+what orientation that edge has. This is different from other local feature
+extractors that read the feature value at the patch center. Texture edges
+can pass near the center, occupy only part of the patch, or appear together
+with other weaker edges. The detector therefore needs a notion of dominant
+orientation that is global enough to be stable but still biased toward the
+center of the patch.
 
-Below figure demonstrates some examples and desired properties of this problem.
+The same image at different zoom levels can produce different dominant edge
+orientations. A line that fills most of the patch at one scale can become a
+small off-center detail at another scale. For this reason the patch size,
+radial weighting, and detection thresholds are part of the algorithm rather
+than incidental implementation details.
 
-% Add figure here
+% TODO: Add a figure demonstrating examples and desired properties of this
+% problem: centered edge, off-center edge, multiple competing edges, and the
+% same texture at different zoom levels.
 
-The Solution. The main algorithm that performs dominant edge detection as well as computing its orientation, edge strength, and coherence is implemented in \texttt{EdgeDetector.\_\_call\_\_}. This class replaces the earlier standalone \texttt{compute\_edge\_features} function while preserving the same conceptual algorithm. The callable class structure lets \texttt{TwoDSensorModule} hold a configured detector instance and sets the pattern for future feature detectors.
+\textbf{The Solution.}
+The main algorithm that performs dominant edge detection, orientation
+estimation, edge strength computation, and coherence computation is
+implemented by the \texttt{\_\_call\_\_} method of \texttt{EdgeDetector}.
+The class replaces the
+earlier standalone \texttt{compute\_edge\_features} function while
+preserving the same conceptual algorithm. The callable class structure lets
+\texttt{TwoDSensorModule} hold a configured detector instance and establishes
+the pattern for future feature detectors.
 
-Note that we have explored well-known edge detection methods such as Canny Edge Detector (cv2.CannyEdge) and
+Given a \texttt{SensorObservation}, the detector first extracts
+\texttt{observation["rgba"][:, :, :3]} and interprets those channels as RGB.
+This is upheld by the current \texttt{SensorObservation} path, where the
+color patch is RGBA with red, green, and blue in that order. A caller that
+constructs observations from images loaded with OpenCV must be careful:
+\texttt{cv2.imread} returns BGR, so such images need to be converted to RGB
+before being placed in the \texttt{rgba} field. Otherwise
+\texttt{cv2.COLOR\_RGB2GRAY} uses the wrong luminance weights, which can
+shift the gradients and the resulting edge orientation.
 
-Additional Details.
+The detector then converts the RGB patch to grayscale and computes Sobel
+gradients:
+\[
+  I_x = \texttt{Sobel}(I, 1, 0), \quad
+  I_y = \texttt{Sobel}(I, 0, 1)
+\]
+From these gradients it builds a per-pixel structure tensor:
+\[
+  J =
+  \begin{bmatrix}
+    I_x^2 & I_x I_y \\
+    I_x I_y & I_y^2
+  \end{bmatrix}
+\]
+Each tensor component is Gaussian-smoothed before aggregation. This order is
+intentional: smoothing $I_x^2$, $I_y^2$, and $I_x I_y$ estimates the local
+second-moment structure, whereas smoothing $I_x$ and $I_y$ first and then
+squaring would suppress opposing gradients before they contribute to the
+orientation estimate.
 
-Note that by itself, \texttt{EdgeDetector.\_\_call\_\_}
-Helper Functions and brief explanations
-\begin{enumerate}
-  \item \texttt{GaussianBlurRGB} in \texttt{transforms.py}
-\end{enumerate}
+The per-pixel tensors are then reduced to one representative tensor for the
+patch using a center-biased weight map:
+\[
+  w(r, c) =
+    \exp\left(-\frac{d(r, c)^2}{2\sigma_r^2}\right)
+    \left(I_x(r, c)^2 + I_y(r, c)^2\right)
+\]
+with weights outside \texttt{radius} set to zero. The radial term makes
+central gradients count more than peripheral gradients, while the gradient
+magnitude term makes flat pixels contribute zero. This is what lets the
+detector estimate a dominant patch-level edge without becoming a pure
+whole-image average.
 
-Part I of implementing TwoDSensorModule
+The aggregated tensor has two eigenvalues, $\lambda_{\min}$ and
+$\lambda_{\max}$. Edge strength is defined as $\sqrt{\lambda_{\max}}$.
+Coherence is defined as:
+\[
+  \frac{\lambda_{\max} - \lambda_{\min}}
+       {\lambda_{\max} + \lambda_{\min}}
+\]
+with a zero fallback when the eigenvalue difference is below tolerance.
+Coherence measures how strongly the patch evidence prefers one orientation:
+it is high for a clean single edge and low for isotropic texture, corners, or
+multiple competing edge directions. The final boolean
+\texttt{has\_edge} is true only when edge strength exceeds
+\texttt{strength\_threshold} and coherence exceeds
+\texttt{coherence\_threshold}.
+
+\textbf{Center Bias and \texttt{max\_center\_offset}.}
+Radial weighting and \texttt{max\_center\_offset} solve different problems.
+Radial weighting is continuous and always participates in the orientation
+estimate: it downweights gradients far from the center but still allows a
+strong off-center edge to influence the aggregate. By contrast,
+\texttt{max\_center\_offset} is an optional hard rejection rule. Once an
+orientation has been estimated, the detector projects the weighted gradient
+evidence onto the detected edge normal and computes how far the weighted edge
+centerline is from the patch center. If that distance is larger than
+\texttt{max\_center\_offset}, the detector returns no edge.
+
+The default value is \texttt{None}, so this hard center check is disabled.
+The option is mainly useful for reducing extra edge clutter during
+visualization. It does not replace radial weighting, because it operates
+after the dominant orientation has already been estimated.
+
+% TODO: Add a figure showing the effect of max_center_offset. Suggested
+% layout: use the same RGB patch with several visible edges, then show
+% detections with max_center_offset disabled versus enabled. The caption should
+% emphasize that radial weighting continuously downweights peripheral
+% gradients, while max_center_offset is a hard rejection criterion for edges
+% whose weighted centerline is too far from the patch center.
+
+\textbf{Geometric Edge Check.}
+\texttt{EdgeDetector} also checks whether the detected RGB edge corresponds
+to a depth discontinuity. It computes Sobel gradients on the depth patch,
+takes the depth gradient at the center pixel, and projects that gradient onto
+the direction perpendicular to the RGB edge. If this perpendicular depth
+gradient exceeds \texttt{depth\_edge\_threshold}, the edge is marked as a
+geometric edge.
+
+This matters because \texttt{TwoDSensorModule} is interested in texture
+edges on a 2D surface, such as the edge of a logo on a mug, not object
+boundaries or surface creases. \texttt{EdgeDetector} only reports
+\texttt{is\_geometric\_edge}; the filtering decision happens in
+\texttt{TwoDSensorModule.\_extract\_2d\_edge}. The default
+\texttt{depth\_edge\_threshold} is \texttt{0.01}, which corresponds to about
+one centimeter when depth is measured in meters.
+
+\textbf{Parameter Choices and Limitations.}
+Several defaults are pragmatic rather than analytically derived.
+\texttt{kernel\_size=7} is a remnant from an earlier version that focused on
+edges in a small center region. \texttt{radius=14.0} was chosen as a
+reasonable center neighborhood for a $64 \times 64$ patch.
+\texttt{sigma\_r=7.0} controls the radial Gaussian falloff, but its exact
+value has not been justified independently. \texttt{coherence\_threshold=0.5}
+is a middle-of-range requirement on a score bounded between 0 and 1.
+\texttt{strength\_threshold=0.1} is intentionally low so weak but coherent
+texture edges are still detected.
+
+The detector returns one dominant orientation. It cannot represent two edges,
+a corner, a junction, or repeated strokes in the same patch except by reducing
+coherence or producing a compromise orientation. The geometric edge check is
+also center-pixel based: it computes the full depth gradient image but samples
+only the center depth gradient for classification. A noisy center depth value
+can therefore mark a texture edge as geometric, or miss a depth discontinuity
+that is nearby but not centered.
+
+\textbf{Alternatives.}
+We explored well-known edge detection methods such as Canny edge detection,
+but Canny returns an edge-pixel mask rather than a compact dominant
+orientation, strength, and coherence for a patch. A single-pixel Sobel angle
+at the patch center would be closer to the old center-feature interpretation,
+but it is brittle when the edge is slightly off center or noisy at the exact
+center. A Gabor filter bank could test for edges at several orientations, but
+it requires choosing a discrete orientation grid and running multiple
+convolutions. The structure tensor gives a continuous orientation estimate in
+one pass while still allowing center bias through the weight map.
 
 \section{Part II: Implementing 2D Movement}
 
