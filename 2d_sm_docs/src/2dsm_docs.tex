@@ -70,193 +70,38 @@ into one outgoing Monty message.
 % https://app.shortcut.com/thousandbrainsproject/story/3700/compare-2d-on-2d-vs-3d-on-3d-inference-when-agent-translated-but-using-burst-sampling
 % 8. Setting surface normal to Z: https://app.shortcut.com/thousandbrainsproject/story/4583/update-2d-sm-with-pose-fully-defined-false-if-no-edge-and-rotating-standard-bases-instead-of-using-surface-normal
 
-\section{Part I: Computing Orientation of Dominant Edge in Patch}
+\section{Detecting Dominant Texture-Edge Orientation in a Patch}
+ 
 
-% Comment: We need to include a clear statement / paragraph on what problem we are trying to solve before starting the section on Structure Tensor, like an overview or abstract. Then, we need to state the high-level approach, i.e. image gradient analysis, so we can flow into Structure Tensor section. 
+The edge-detection part of \texttt{TwoDSensorModule} does not try to produce a
+pixel mask or classify the center pixel alone. It asks a patch-level question:
+does the observed $64 \times 64$ image patch contain one usable texture edge,
+and if so, what orientation should be passed downstream as the local edge
+feature? This is different from other local feature extractors that can read a
+feature directly at the patch center. A texture edge can pass near the center,
+occupy only part of the patch, appear together with weaker secondary edges, or
+change apparent dominance as zoom changes.
 
-% Comment: I think we may want to introduce EdgeDetector first, then Structure Tensor, then gradient_to_tangent_angle. Also, the section titles shouldn't be class names - those were good during outline to make sure we cover all major classes and functions written, but not as a reference manual. 
+The high-level approach is image-gradient analysis. The detector converts the
+RGB patch to grayscale, computes Sobel gradients, turns those gradients into
+per-pixel structure tensors, smooths and center-weights the tensor evidence,
+and aggregates it into one patch-level tensor. That tensor provides a dominant
+orientation, strength, and coherence score. The detector then applies
+thresholds, optional centerline rejection, and a depth-gradient check so the
+2D sensor can use texture edges on a surface while rejecting geometric edges
+such as object boundaries or surface creases.
 
-\subsection{\texttt{StructureTensor}}
-
-% Comment: The \textbf{} separation was added when outlining, but I think the document should read more naturally without these breaks. 
-
-\textbf{The Problem.}
-
-% Comment: Thousands of gradients? We are using 64x64 patch. 
-A Sobel gradient at one pixel gives a local direction of intensity change,
-but a sensor patch contains thousands of such gradients. 
-
-% Comment: We need to state that in other features, we typically get the feature at center pixel, but this is not what we want here. 
-Some gradients come from the dominant texture edge, some come from noise, and some come from secondary texture. We need a compact way to summarize whether the patch
-contains one coherent orientation or many competing orientations.
-
-
-% Comment: I don't think the below paragraph (before The Solution) is necessary. 
-A simple average of gradient angles is not sufficient. Angles wrap around,
-opposite gradients can describe the same edge, and weak gradients from flat
-regions should not count the same as strong gradients near an edge. The
-representation must preserve orientation evidence without committing too
-early to a single angle.
-
-
-% Comment: Again, get rid of \textbf{}. 
-\textbf{The Solution.}
-\texttt{StructureTensor} stores the second-order gradient statistics for a
-local image region:
-\[
-  J =
-  \begin{bmatrix}
-    J_{xx} & J_{xy} \\
-    J_{xy} & J_{yy}
-  \end{bmatrix}
-  =
-  \begin{bmatrix}
-    I_x^2 & I_x I_y \\
-    I_x I_y & I_y^2
-  \end{bmatrix}
-\]
-% Comment: Before the next sentence, we need to say "where I_x is ... and I_y is ... and Ix^2, Ixy, Iy^2 is... (i.e. define the terms). 
-
-In \texttt{EdgeDetector}, this tensor is first computed per pixel and
-Gaussian-smoothed, then the smoothed tensors are aggregated over the patch
-with center-biased weights. After aggregation, \texttt{StructureTensor}
-represents the dominant gradient statistics of the whole weighted patch.
-
-The eigenvectors of $J$ identify the directions of smallest and largest
-gradient variation. The largest eigenvalue, $\lambda_{\max}$, measures how
-much gradient energy exists in the dominant gradient direction. The smallest
-eigenvalue, $\lambda_{\min}$, measures how much gradient energy exists in the
-orthogonal direction. A clean straight edge has one large eigenvalue and one
-small eigenvalue. A corner, junction, or isotropic texture has two more
-similar eigenvalues because gradient energy exists in multiple directions.
-
-\textbf{Orientation, Strength, and Coherence.}
-The dominant gradient direction is computed directly from the tensor entries:
-\[
-  \theta_g =
-    \frac{1}{2}
-    \arctan2(2J_{xy}, J_{xx} - J_{yy})
-\]
-
-% Comment: Make it clear that the range of values for the edge angle is (0, pi]. For horizontal lines, it will resolve to pi because of arctan2 and IEEE754. 
-The factor $\frac{1}{2}$ is load-bearing. The tensor describes orientation,
-not a signed vector direction, so the relevant space is modulo $\pi$ rather
-than modulo $2\pi$. The doubled-angle formula lets the tensor combine
-opposite gradients that correspond to the same undirected edge.
-
-
-% Comment: We can just say that direction of edge is perpendicular to the dominant gradient direction. 
-The edge tangent is perpendicular to the gradient direction:
-\[
-  \theta_e = \theta_g + \frac{\pi}{2}
-\]
-The implementation wraps this value into the range used by the downstream
-edge pose code. In practice the detected edge orientation is undirected:
-angles that differ by $\pi$ describe the same edge line.
-
-Edge strength is:
-\[
-  \sqrt{\lambda_{\max}}
-\]
-This returns the dominant gradient magnitude scale rather than the squared
-energy scale stored in the tensor. Coherence is:
-\[
-  \frac{\lambda_{\max} - \lambda_{\min}}
-       {\lambda_{\max} + \lambda_{\min}}
-\]
-with a zero fallback when the eigenvalue difference is below tolerance. This
-score is close to 1 when the patch has one dominant orientation and close to
-0 when the gradient evidence is isotropic or ambiguous.
-
-% Comment: I don't think the below subtle details section is needed. 
-\textbf{Subtle Details.}
-The tensor components are squared before smoothing or aggregation. This is
-what preserves local gradient energy. Smoothing $I_x$ and $I_y$ first would
-allow nearby opposite gradients to cancel before the tensor is formed,
-weakening the orientation estimate.
-
-The tensor also separates ``how much edge evidence exists'' from ``how
-coherent that evidence is.'' A high-contrast corner can have high strength
-but low coherence, while a faint but clean line can have lower strength and
-higher coherence. \texttt{EdgeDetector} therefore thresholds both values.
-
-% Comment: We should add like a small 'Future work' paragraph here before going to next section on gradient_to_tangent_angle. Specifically, think about how we could extend edge detection to be signed, so there is a sign for when we are going from light to dark parts of an image vs. dark to light parts of an image. 
-
-% Comment: The below shouldn't be its own section. 
-\subsection{\texttt{\_gradient\_to\_tangent\_angle}}
-
-\textbf{The Problem.}
-\texttt{StructureTensor.gradient\_theta} gives the dominant gradient
-direction, but the feature passed to the 2D sensor is an edge tangent. The
-gradient points normal to an edge: it points across the intensity change,
-not along the line that the sensor should use as the local edge direction.
-
-There is also an angle-convention issue. The current structure-tensor
-detector represents undirected edge orientation. A line at angle $\theta$ and
-the same line at angle $\theta + \pi$ describe the same edge. Future
-directional edges, such as distinguishing light-to-dark from dark-to-light,
-would require preserving gradient polarity somewhere else in the detector.
-The current tensor has already squared and multiplied gradients, so opposite
-gradient signs have been intentionally collapsed.
-
-% Comment: We should also make reference to code that all the above is encapsulated in the StructureTensor class and used by the Edge Detector below. 
-
-% Comment: Okay, I see that several comments from above are actually addressed in the below section. We don't need to go into this much depth on what the function does because the reader can read the code. It is more important to make it clear and concise, and explain the reasoning, logic, and high-level intuition. 
-
-\textbf{The Solution.}
-\texttt{\_gradient\_to\_tangent\_angle} rotates the gradient direction by
-$\frac{\pi}{2}$:
-\[
-  \theta_e = \theta_g + \frac{\pi}{2}
-\]
-This converts a normal direction into the corresponding tangent direction.
-The implementation then wraps the result with:
-\[
-  (\theta_e + 2\pi) \bmod 2\pi
-\]
-so the returned value is always non-negative and less than $2\pi$.
-
-In current use, this helper is called from \texttt{StructureTensor.edge\_angle}.
-That call site supplies \texttt{gradient\_theta}, which comes from the
-half-angle structure-tensor formula and represents an undirected orientation.
-Downstream tests therefore compare detected edge angles modulo $\pi$, because
-$\theta$ and $\theta + \pi$ are equivalent for the present detector.
-
-\textbf{Subtle Details.}
-The helper itself wraps to $[0, 2\pi)$; it does not by itself enforce an
-undirected $[0, \pi]$ range for arbitrary inputs. The effective undirected
-range comes from the structure-tensor caller, not from the modulo operation in
-this helper. This distinction matters if a future detector introduces
-directional edge polarity. In that case, preserving $[0, 2\pi)$ can be useful,
-but the detector would also need a source of signed gradient information that
-the current tensor representation no longer contains.
-
-\textbf{Gotchas.}
-The lower endpoint of the practical edge-angle range is sensitive to IEEE 754
-signed zero behavior. For a horizontal or vertical idealized tensor,
-\texttt{arctan2(+0.0, negative)} returns $\pi$, while
-\texttt{arctan2(-0.0, negative)} returns $-\pi$. Because the structure tensor
-usually produces positive zero for \texttt{Jxy = Ix * Iy}, the wrapped tangent
-angle lands at $\pi$ rather than $0$. The tests therefore treat edge
-orientation as modulo $\pi$ instead of depending on one endpoint convention.
-
-\subsection{\texttt{EdgeDetector}}
+\subsection{Patch-Level Edge Detection Pipeline}
 
 % TODO: A small figure showing how edge angle is measured (image-x to image-y).
 
-\textbf{The Problem.}
-This feature was initially posed as an edge detection problem, but the
-actual problem is more specific. The 2D sensor does not only need to know
-whether an edge exists at a single center pixel. It needs to know whether
-there is a dominant edge in the observed $64 \times 64$ patch and, if so,
-what orientation that edge has. This is different from other local feature
-extractors that read the feature value at the patch center. Texture edges
-can pass near the center, occupy only part of the patch, or appear together
-with other weaker edges. The detector therefore needs a notion of dominant
-orientation that is global enough to be stable but still biased toward the
-center of the patch.
+% Comment: Thousands of gradients? We are using 64x64 patch. 
 
-The same image at different zoom levels can produce different dominant edge
+% Comment: We need to state that in other features, we typically get the feature at center pixel, but this is not what we want here. 
+
+The pipeline needs a notion of dominant orientation that is global enough to be
+stable across the patch but still biased toward the center. The same image at
+different zoom levels can produce different dominant edge
 orientations. A line that fills most of the patch at one scale can become a
 small off-center detail at another scale. For this reason the patch size,
 radial weighting, and detection thresholds are part of the algorithm rather
@@ -266,17 +111,10 @@ than incidental implementation details.
 % problem: centered edge, off-center edge, multiple competing edges, and the
 % same texture at different zoom levels.
 
-\textbf{The Solution.}
 The main algorithm that performs dominant edge detection, orientation
 estimation, edge strength computation, and coherence computation is
 implemented by the \texttt{\_\_call\_\_} method of \texttt{EdgeDetector}.
 
-% Comment: No need to mention previous function. 
-The class replaces the
-earlier standalone \texttt{compute\_edge\_features} function while
-preserving the same conceptual algorithm. The callable class structure lets
-\texttt{TwoDSensorModule} hold a configured detector instance and establishes
-the pattern for future feature detectors.
 
 Given a \texttt{SensorObservation}, the detector first extracts
 \texttt{observation["rgba"][:, :, :3]} and interprets those channels as RGB.
@@ -289,12 +127,7 @@ before being placed in the \texttt{rgba} field. Otherwise
 shift the gradients and the resulting edge orientation.
 
 The detector then converts the RGB patch to grayscale and computes Sobel
-gradients:
-\[
-  I_x = \texttt{Sobel}(I, 1, 0), \quad
-  I_y = \texttt{Sobel}(I, 0, 1)
-\]
-From these gradients it builds a per-pixel structure tensor:
+gradients $I_x$ (gradient in $x$-direction) and $I_y$ (gradient in $y$-direction). From these gradients we can build structure tensor per pixel:
 \[
   J =
   \begin{bmatrix}
@@ -302,20 +135,8 @@ From these gradients it builds a per-pixel structure tensor:
     I_x I_y & I_y^2
   \end{bmatrix}
 \]
-Each tensor component is Gaussian-smoothed before aggregation. This order is
-intentional: smoothing $I_x^2$, $I_y^2$, and $I_x I_y$ estimates the local
-second-moment structure, whereas smoothing $I_x$ and $I_y$ first and then
-squaring would suppress opposing gradients before they contribute to the
-orientation estimate.
 
-The per-pixel tensors are then reduced to one representative tensor for the
-patch using a center-biased weight map:
-\[
-  w(r, c) =
-    \exp\left(-\frac{d(r, c)^2}{2\sigma_r^2}\right)
-    \left(I_x(r, c)^2 + I_y(r, c)^2\right)
-\]
-with weights outside \texttt{radius} set to zero. The radial term makes
+The per-pixel tensors are then reduced to one representative tensor for the entire patch using a center-biased weighted averaging. The radial term makes
 central gradients count more than peripheral gradients, while the gradient
 magnitude term makes flat pixels contribute zero. This is what lets the
 detector estimate a dominant patch-level edge without becoming a pure
@@ -324,11 +145,11 @@ whole-image average.
 The aggregated tensor has two eigenvalues, $\lambda_{\min}$ and
 $\lambda_{\max}$. Edge strength is defined as $\sqrt{\lambda_{\max}}$.
 Coherence is defined as:
-\[
+$
   \frac{\lambda_{\max} - \lambda_{\min}}
        {\lambda_{\max} + \lambda_{\min}}
-\]
-with a zero fallback when the eigenvalue difference is below tolerance.
+$.
+
 Coherence measures how strongly the patch evidence prefers one orientation:
 it is high for a clean single edge and low for isotropic texture, corners, or
 multiple competing edge directions. The final boolean
@@ -409,8 +230,125 @@ it requires choosing a discrete orientation grid and running multiple
 convolutions. The structure tensor gives a continuous orientation estimate in
 one pass while still allowing center bias through the weight map.
 
+\subsection{Summarizing Gradient Evidence with a Structure Tensor}
+
+% Comment: The \textbf{} separation was added when outlining, but I think the document should read more naturally without these breaks. 
+
+\texttt{StructureTensor} is the compact representation used inside the
+detector after the patch has been converted into gradient evidence. A Sobel
+gradient at one pixel gives a local direction of intensity change, but a
+$64 \times 64$ sensor patch contains many such gradients. Some come from the
+dominant texture edge, some come from noise, and some come from secondary
+texture. The tensor summarizes whether the weighted patch contains one
+coherent orientation or many competing orientations.
+
+% Comment: I don't think the below paragraph (before The Solution) is necessary. 
+
+% Comment: Again, get rid of \textbf{}. 
+
+For one local image region, the structure tensor stores second-order gradient
+statistics:
+\[
+  J =
+  \begin{bmatrix}
+    J_{xx} & J_{xy} \\
+    J_{xy} & J_{yy}
+  \end{bmatrix}
+  =
+  \begin{bmatrix}
+    I_x^2 & I_x I_y \\
+    I_x I_y & I_y^2
+  \end{bmatrix}
+\]
+% Comment: Before the next sentence, we need to say "where I_x is ... and I_y is ... and Ix^2, Ixy, Iy^2 is... (i.e. define the terms). 
+
+where $I_x$ is the horizontal Sobel gradient, $I_y$ is the vertical Sobel
+gradient, $I_x^2$ and $I_y^2$ are the squared gradient energies in each image
+axis, and $I_x I_y$ is the cross term that records how the two gradient
+components vary together.
+
+In \texttt{EdgeDetector}, this tensor is first computed per pixel and
+Gaussian-smoothed, then the smoothed tensors are aggregated over the patch
+with center-biased weights. After aggregation, \texttt{StructureTensor}
+represents the dominant gradient statistics of the whole weighted patch.
+
+The eigenvectors of $J$ identify the directions of smallest and largest
+gradient variation. The largest eigenvalue, $\lambda_{\max}$, measures how
+much gradient energy exists in the dominant gradient direction. The smallest
+eigenvalue, $\lambda_{\min}$, measures how much gradient energy exists in the
+orthogonal direction. A clean straight edge has one large eigenvalue and one
+small eigenvalue. A corner, junction, or isotropic texture has two more
+similar eigenvalues because gradient energy exists in multiple directions.
+
+\textbf{Orientation, Strength, and Coherence.}
+The dominant gradient direction is computed directly from the tensor entries:
+\[
+  \theta_g =
+    \frac{1}{2}
+    \arctan2(2J_{xy}, J_{xx} - J_{yy})
+\]
+
+% Comment: Make it clear that the range of values for the edge angle is (0, pi]. For horizontal lines, it will resolve to pi because of arctan2 and IEEE754. 
+The factor $\frac{1}{2}$ is load-bearing. The tensor describes orientation,
+not a signed vector direction, so the relevant space is modulo $\pi$ rather
+than modulo $2\pi$. The doubled-angle formula lets the tensor combine
+opposite gradients that correspond to the same undirected edge.
+
+\textbf{From Gradient Direction to Edge Tangent.}
+
+% Comment: The below shouldn't be its own section. 
+
+\texttt{StructureTensor.gradient\_theta} gives the dominant gradient
+direction, but the feature passed to the 2D sensor is an edge tangent. The
+gradient points normal to an edge: it points across the intensity change,
+not along the line that the sensor should use as the local edge direction.
+
+% Comment: We can just say that direction of edge is perpendicular to the dominant gradient direction. 
+The edge tangent is perpendicular to the gradient direction:
+\[
+  \theta_e = \theta_g + \frac{\pi}{2}
+\]
+
+% Comment: We should also make reference to code that all the above is encapsulated in the StructureTensor class and used by the Edge Detector below. 
+
+% Comment: Okay, I see that several comments from above are actually addressed in the below section. We don't need to go into this much depth on what the function does because the reader can read the code. It is more important to make it clear and concise, and explain the reasoning, logic, and high-level intuition. 
+
+The implementation wraps this value into the range used by the downstream
+edge pose code. In practice the detected edge orientation is undirected:
+angles that differ by $\pi$ describe the same edge line. For horizontal lines,
+the practical endpoint convention resolves to $\pi$ rather than $0$ because
+\texttt{arctan2(+0.0, negative)} returns $\pi$ under IEEE 754 signed-zero
+behavior.
+
+Edge strength is:
+\[
+  \sqrt{\lambda_{\max}}
+\]
+This returns the dominant gradient magnitude scale rather than the squared
+energy scale stored in the tensor. Coherence is:
+\[
+  \frac{\lambda_{\max} - \lambda_{\min}}
+       {\lambda_{\max} + \lambda_{\min}}
+\]
+with a zero fallback when the eigenvalue difference is below tolerance. This
+score is close to 1 when the patch has one dominant orientation and close to
+0 when the gradient evidence is isotropic or ambiguous.
+
+% Comment: I don't think the below subtle details section is needed. 
+
+\textbf{Future Work: Signed Edge Polarity.}
+
+% Comment: We should add like a small 'Future work' paragraph here before going to next section on gradient_to_tangent_angle. Specifically, think about how we could extend edge detection to be signed, so there is a sign for when we are going from light to dark parts of an image vs. dark to light parts of an image. 
+
+The current structure-tensor detector represents undirected edge orientation.
+A line at angle $\theta$ and the same line at angle $\theta + \pi$ describe
+the same edge. Future directional edges, such as distinguishing light-to-dark
+from dark-to-light, would require preserving gradient polarity somewhere else
+in the detector. The current tensor has already squared and multiplied
+gradients, so opposite gradient signs have been intentionally collapsed.
+
 % Comment: I feel like this should be included as part of the EdgeDetector section. 
-\subsection{\texttt{EdgeFeatures}}
+\subsection{Detector Output and Downstream Contract}
 
 \textbf{The Problem.}
 The edge detector produces several related quantities, and downstream code
@@ -467,7 +405,7 @@ edge rejected by \texttt{max\_center\_offset} both return
 If future debugging or learning logic needs to distinguish these cases, the
 result type will need an explicit rejection reason.
 
-\subsection{\texttt{\_angle\_to\_pose\_2d}}
+\subsection{Projecting Image-Space Edge Orientation into 2D Pose}
 
 \textbf{The Problem.}
 \texttt{EdgeDetector} is intentionally reusable. It can detect a dominant
