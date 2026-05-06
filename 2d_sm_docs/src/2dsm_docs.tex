@@ -72,31 +72,34 @@ into one outgoing Monty message.
 
 \section{Part I: Computing Orientation of Dominant Edge in Patch}
 
-Key functions:
-\begin{enumerate}
-  \item \texttt{StructureTensor}
-  \item \texttt{\_gradient\_to\_tangent\_angle}
-  \item \texttt{EdgeDetector.\_\_call\_\_}
-  \item \texttt{EdgeFeatures}
-  \item \texttt{\_angle\_to\_pose\_2d}
-  \item \texttt{EdgeDetector.\_is\_geometric\_edge}
-\end{enumerate}
+% Comment: We need to include a clear statement / paragraph on what problem we are trying to solve before starting the section on Structure Tensor, like an overview or abstract. Then, we need to state the high-level approach, i.e. image gradient analysis, so we can flow into Structure Tensor section. 
+
+% Comment: I think we may want to introduce EdgeDetector first, then Structure Tensor, then gradient_to_tangent_angle. Also, the section titles shouldn't be class names - those were good during outline to make sure we cover all major classes and functions written, but not as a reference manual. 
 
 \subsection{\texttt{StructureTensor}}
 
+% Comment: The \textbf{} separation was added when outlining, but I think the document should read more naturally without these breaks. 
+
 \textbf{The Problem.}
+
+% Comment: Thousands of gradients? We are using 64x64 patch. 
 A Sobel gradient at one pixel gives a local direction of intensity change,
-but a sensor patch contains thousands of such gradients. Some gradients come
-from the dominant texture edge, some come from noise, and some come from
-secondary texture. We need a compact way to summarize whether the patch
+but a sensor patch contains thousands of such gradients. 
+
+% Comment: We need to state that in other features, we typically get the feature at center pixel, but this is not what we want here. 
+Some gradients come from the dominant texture edge, some come from noise, and some come from secondary texture. We need a compact way to summarize whether the patch
 contains one coherent orientation or many competing orientations.
 
+
+% Comment: I don't think the below paragraph (before The Solution) is necessary. 
 A simple average of gradient angles is not sufficient. Angles wrap around,
 opposite gradients can describe the same edge, and weak gradients from flat
 regions should not count the same as strong gradients near an edge. The
 representation must preserve orientation evidence without committing too
 early to a single angle.
 
+
+% Comment: Again, get rid of \textbf{}. 
 \textbf{The Solution.}
 \texttt{StructureTensor} stores the second-order gradient statistics for a
 local image region:
@@ -112,6 +115,8 @@ local image region:
     I_x I_y & I_y^2
   \end{bmatrix}
 \]
+% Comment: Before the next sentence, we need to say "where I_x is ... and I_y is ... and Ix^2, Ixy, Iy^2 is... (i.e. define the terms). 
+
 In \texttt{EdgeDetector}, this tensor is first computed per pixel and
 Gaussian-smoothed, then the smoothed tensors are aggregated over the patch
 with center-biased weights. After aggregation, \texttt{StructureTensor}
@@ -132,11 +137,15 @@ The dominant gradient direction is computed directly from the tensor entries:
     \frac{1}{2}
     \arctan2(2J_{xy}, J_{xx} - J_{yy})
 \]
+
+% Comment: Make it clear that the range of values for the edge angle is (0, pi]. For horizontal lines, it will resolve to pi because of arctan2 and IEEE754. 
 The factor $\frac{1}{2}$ is load-bearing. The tensor describes orientation,
 not a signed vector direction, so the relevant space is modulo $\pi$ rather
 than modulo $2\pi$. The doubled-angle formula lets the tensor combine
 opposite gradients that correspond to the same undirected edge.
 
+
+% Comment: We can just say that direction of edge is perpendicular to the dominant gradient direction. 
 The edge tangent is perpendicular to the gradient direction:
 \[
   \theta_e = \theta_g + \frac{\pi}{2}
@@ -159,6 +168,7 @@ with a zero fallback when the eigenvalue difference is below tolerance. This
 score is close to 1 when the patch has one dominant orientation and close to
 0 when the gradient evidence is isotropic or ambiguous.
 
+% Comment: I don't think the below subtle details section is needed. 
 \textbf{Subtle Details.}
 The tensor components are squared before smoothing or aggregation. This is
 what preserves local gradient energy. Smoothing $I_x$ and $I_y$ first would
@@ -170,6 +180,9 @@ coherent that evidence is.'' A high-contrast corner can have high strength
 but low coherence, while a faint but clean line can have lower strength and
 higher coherence. \texttt{EdgeDetector} therefore thresholds both values.
 
+% Comment: We should add like a small 'Future work' paragraph here before going to next section on gradient_to_tangent_angle. Specifically, think about how we could extend edge detection to be signed, so there is a sign for when we are going from light to dark parts of an image vs. dark to light parts of an image. 
+
+% Comment: The below shouldn't be its own section. 
 \subsection{\texttt{\_gradient\_to\_tangent\_angle}}
 
 \textbf{The Problem.}
@@ -185,6 +198,10 @@ directional edges, such as distinguishing light-to-dark from dark-to-light,
 would require preserving gradient polarity somewhere else in the detector.
 The current tensor has already squared and multiplied gradients, so opposite
 gradient signs have been intentionally collapsed.
+
+% Comment: We should also make reference to code that all the above is encapsulated in the StructureTensor class and used by the Edge Detector below. 
+
+% Comment: Okay, I see that several comments from above are actually addressed in the below section. We don't need to go into this much depth on what the function does because the reader can read the code. It is more important to make it clear and concise, and explain the reasoning, logic, and high-level intuition. 
 
 \textbf{The Solution.}
 \texttt{\_gradient\_to\_tangent\_angle} rotates the gradient direction by
@@ -225,6 +242,8 @@ orientation as modulo $\pi$ instead of depending on one endpoint convention.
 
 \subsection{\texttt{EdgeDetector}}
 
+% TODO: A small figure showing how edge angle is measured (image-x to image-y).
+
 \textbf{The Problem.}
 This feature was initially posed as an edge detection problem, but the
 actual problem is more specific. The 2D sensor does not only need to know
@@ -251,6 +270,8 @@ than incidental implementation details.
 The main algorithm that performs dominant edge detection, orientation
 estimation, edge strength computation, and coherence computation is
 implemented by the \texttt{\_\_call\_\_} method of \texttt{EdgeDetector}.
+
+% Comment: No need to mention previous function. 
 The class replaces the
 earlier standalone \texttt{compute\_edge\_features} function while
 preserving the same conceptual algorithm. The callable class structure lets
@@ -338,6 +359,7 @@ after the dominant orientation has already been estimated.
 % gradients, while max_center_offset is a hard rejection criterion for edges
 % whose weighted centerline is too far from the patch center.
 
+% Comment: The section below could be tighter/shorter. 
 \textbf{Geometric Edge Check.}
 \texttt{EdgeDetector} also checks whether the detected RGB edge corresponds
 to a depth discontinuity. It computes Sobel gradients on the depth patch,
@@ -345,6 +367,8 @@ takes the depth gradient at the center pixel, and projects that gradient onto
 the direction perpendicular to the RGB edge. If this perpendicular depth
 gradient exceeds \texttt{depth\_edge\_threshold}, the edge is marked as a
 geometric edge.
+
+% TODO: Add diagram / sketch of how geometric edge check works. 
 
 This matters because \texttt{TwoDSensorModule} is interested in texture
 edges on a 2D surface, such as the edge of a logo on a mug, not object
@@ -354,6 +378,7 @@ boundaries or surface creases. \texttt{EdgeDetector} only reports
 \texttt{depth\_edge\_threshold} is \texttt{0.01}, which corresponds to about
 one centimeter when depth is measured in meters.
 
+% Comment: We need better explanation of what the parameters control first, and then the choices. 
 \textbf{Parameter Choices and Limitations.}
 Several defaults are pragmatic rather than analytically derived.
 \texttt{kernel\_size=7} is a remnant from an earlier version that focused on
@@ -384,6 +409,7 @@ it requires choosing a discrete orientation grid and running multiple
 convolutions. The structure tensor gives a continuous orientation estimate in
 one pass while still allowing center bias through the weight map.
 
+% Comment: I feel like this should be included as part of the EdgeDetector section. 
 \subsection{\texttt{EdgeFeatures}}
 
 \textbf{The Problem.}
@@ -427,6 +453,7 @@ into the 2D pose pipeline. Treating \texttt{has\_edge} as the gate preserves
 the detector's intended separation between diagnostic measurements and usable
 edge features.
 
+% Comment: The below limitation is not an issue, remove. 
 \textbf{Limitations.}
 The dataclass does not encode why detection failed. A uniform patch and an
 edge rejected by \texttt{max\_center\_offset} both return
@@ -534,6 +561,8 @@ convention.
 
 A general orientation projection helper should make the target reference
 frame explicit. The reusable pattern is:
+
+% Comment: Question - can this work for any dimension? 
 \begin{verbatim}
 def image_angle_to_frame_vector(
     angle,
