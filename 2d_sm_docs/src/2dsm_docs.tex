@@ -18,14 +18,57 @@
 
 \section{Introduction}
 
-This document is a reference manual to \href{https://github.com/thousandbrainsproject/tbp.monty}{\texttt{TwoDSensorModule}} as implemented in \texttt{tbp.monty} version \texttt{0.33.0}. The document will cover results and explanation of how and why certain algorithms are implemented, and also point out limitations and areas for improvement. The manual will be detailed enough for someone who is interested in improving any part of the TwoDSensorModule to have a good understanding on why certain things were chosen and get a guide for where to go.
+This document is a reference manual for
+\href{https://github.com/thousandbrainsproject/tbp.monty}{\texttt{TwoDSensorModule}}
+as implemented in \texttt{tbp.monty} version \texttt{0.33.0}. It is written
+for future maintainers and contributors who need to improve the 2D sensor
+module without losing the design intent behind the current implementation. The
+goal is to explain what problem each algorithm solves, why the main choices
+were made, what limitations remain, and where future work can build on the
+existing design.
 
-The implementation of TwoDSensorModule was roughly divided into two phases:
+\texttt{TwoDSensorModule} converts local surface observations into a
+2D-compatible representation while preserving compatibility with Monty's
+message interface. It has two central responsibilities. First, it detects the
+dominant texture-edge orientation in an image patch so a local visual edge can
+be represented as pose information. Second, it accumulates movement over a
+curved surface in a transported 2D surface chart while still emitting
+3D-shaped location and displacement fields.
+
+The implementation of \texttt{TwoDSensorModule} is divided into two main
+parts:
 
 \begin{enumerate}
-  \item Detecting dominant edge in a patch
-  \item Implementing 2D Movement
+  \item Estimating dominant texture-edge orientation in a sensor patch.
+  \item Accumulating 2D movement over a curved surface.
 \end{enumerate}
+
+The manual is also expected to grow with a results-oriented section. That
+section should add qualitative edge-detection examples, parameter studies,
+learned and projected edge models, 2D movement behavior, and inference
+comparisons. The commented outline below preserves the current working list of
+result topics and related Shortcut tickets.
+
+Part I explains the image-gradient and structure-tensor path used to estimate
+edge orientation in image space. Part II explains tangent-frame transport and
+arc-length correction for 2D movement on curved surfaces. The final integration
+section explains how \texttt{TwoDSensorModule.step} combines the saved surface
+geometry, optional texture-edge pose, and 2D location/displacement convention
+into one outgoing Monty message.
+
+% Comment: Do not delete the outline below. We will need to add results (I think before methods? not sure yet), the below lists some relevant Shortcut tickets that contain these. 
+% Outline for Results:
+% 1. Include example patches of detected edges - draw main object, and then "zooming" into specific patches. 
+% 2. Include example of different zooms and blur factors (https://app.shortcut.com/thousandbrainsproject/story/2743/weighted-algorithm-on-monty)
+% 3. Include example of projected / learned models (edge as vector) - TBP Disk and Numenta Disk (https://app.shortcut.com/thousandbrainsproject/story/2190/ensure-edge-is-represented-as-morphological-feature-and-can-be-placed-within-3d-space)
+% 4. Include results on synthetic images to demonstrate various parameters of EdgeDetection class 
+% - https://app.shortcut.com/thousandbrainsproject/story/2666/evaluate-additional-synthetic-objects-conditions
+% 5. Edge within edge (https://app.shortcut.com/thousandbrainsproject/story/2667/edge-within-edge-see-viviane-s-share-on-slack-can-we-learn-a-hierarchical-model-with-a-low-level)
+% 6. 2D movement
+% 6. Inference results 
+% 7. https://app.shortcut.com/thousandbrainsproject/story/3707/qualitatively-estimate-spacing-error-and-inference-accuracy-when-generalizing-between-2d-models-learned-on-different-surface
+% https://app.shortcut.com/thousandbrainsproject/story/3700/compare-2d-on-2d-vs-3d-on-3d-inference-when-agent-translated-but-using-burst-sampling
+% 8. Setting surface normal to Z: https://app.shortcut.com/thousandbrainsproject/story/4583/update-2d-sm-with-pose-fully-defined-false-if-no-edge-and-rotating-standard-bases-instead-of-using-surface-normal
 
 \section{Part I: Computing Orientation of Dominant Edge in Patch}
 
