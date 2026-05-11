@@ -9,6 +9,7 @@ src/tbp/monty/conf
 2d_sm_docs/src/*
 !2d_sm_docs/src/
 !2d_sm_docs/src/*.tex
+!2d_sm_docs/src/*.bib
 
 # wandb local configs
 wandb/

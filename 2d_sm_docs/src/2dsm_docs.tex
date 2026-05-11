@@ -43,18 +43,18 @@ parts:
   \item Accumulating 2D movement over a curved surface.
 \end{enumerate}
 
-The manual is also expected to grow with a results-oriented section. That
-section should add qualitative edge-detection examples, parameter studies,
-learned and projected edge models, 2D movement behavior, and inference
-comparisons. The commented outline below preserves the current working list of
-result topics and related Shortcut tickets.
+% The manual is also expected to grow with a results-oriented section. That
+% section should add qualitative edge-detection examples, parameter studies,
+% learned and projected edge models, 2D movement behavior, and inference
+% comparisons. The commented outline below preserves the current working list of
+% result topics and related Shortcut tickets.
 
-Part I explains the image-gradient and structure-tensor path used to estimate
-edge orientation in image space. Part II explains tangent-frame transport and
-arc-length correction for 2D movement on curved surfaces. The final integration
-section explains how \texttt{TwoDSensorModule.step} combines the saved surface
-geometry, optional texture-edge pose, and 2D location/displacement convention
-into one outgoing Monty message.
+% Part I explains the image-gradient and structure-tensor path used to estimate
+% edge orientation in image space. Part II explains tangent-frame transport and
+% arc-length correction for 2D movement on curved surfaces. The final integration
+% section explains how \texttt{TwoDSensorModule.step} combines the saved surface
+% geometry, optional texture-edge pose, and 2D location/displacement convention
+% into one outgoing Monty message.
 
 % Comment: Do not delete the outline below. We will need to add results (I think before methods? not sure yet), the below lists some relevant Shortcut tickets that contain these. 
 % Outline for Results:
@@ -71,45 +71,42 @@ into one outgoing Monty message.
 % 8. Setting surface normal to Z: https://app.shortcut.com/thousandbrainsproject/story/4583/update-2d-sm-with-pose-fully-defined-false-if-no-edge-and-rotating-standard-bases-instead-of-using-surface-normal
 
 \section{Detecting Dominant Texture-Edge Orientation in a Patch}
- 
+\label{edge_detection}
 
-The edge-detection part of \texttt{TwoDSensorModule} does not try to produce a
-pixel mask or classify the center pixel alone. It asks a patch-level question:
-does the observed $64 \times 64$ image patch contain one usable texture edge,
-and if so, what orientation should be passed downstream as the local edge
-feature? This is different from other local feature extractors that can read a
-feature directly at the patch center. A texture edge can pass near the center,
-occupy only part of the patch, appear together with weaker secondary edges, or
-change apparent dominance as zoom changes.
-
-The high-level approach is image-gradient analysis. The detector converts the
-RGB patch to grayscale, computes Sobel gradients, turns those gradients into
-per-pixel structure tensors, smooths and center-weights the tensor evidence,
-and aggregates it into one patch-level tensor. That tensor provides a dominant
-orientation, strength, and coherence score. The detector then applies
-thresholds, optional centerline rejection, and a depth-gradient check so the
-2D sensor can use texture edges on a surface while rejecting geometric edges
-such as object boundaries or surface creases.
-
-\subsection{Patch-Level Edge Detection Pipeline}
-
-% TODO: A small figure showing how edge angle is measured (image-x to image-y).
-
-% Comment: Thousands of gradients? We are using 64x64 patch. 
-
-% Comment: We need to state that in other features, we typically get the feature at center pixel, but this is not what we want here. 
-
-The pipeline needs a notion of dominant orientation that is global enough to be
-stable across the patch but still biased toward the center. The same image at
-different zoom levels can produce different dominant edge
-orientations. A line that fills most of the patch at one scale can become a
-small off-center detail at another scale. For this reason the patch size,
-radial weighting, and detection thresholds are part of the algorithm rather
-than incidental implementation details.
+The goal of the edge-detection work was to detect the dominant texture-edge
+orientation in an image patch. Once detected, the edge orientation is 
+projected into the 2D tangent frame used by \texttt{TwoDSensorModule} (see
+Section~\ref{sec:tangent_frame}). Unlike some other features in Monty, which
+are read directly from the center pixel of a $64 \times 64$ patch, we wanted to extract the 
+dominant orientation across the \textit{whole} patch. This led to the development of 
+\texttt{EdgeDetector} (in \texttt{edge\_detection.py}), which extracts an edge angle between
+$(0, \pi]$ when a dominant edge is identified, along with supporting edge attributes. The Edge Detection module
+also provides a helper for projecting the detected image-space edge angle into
+the vectors expected by the chosen reference frame.
 
 % TODO: Add a figure demonstrating examples and desired properties of this
 % problem: centered edge, off-center edge, multiple competing edges, and the
 % same texture at different zoom levels.
+% TODO: Add a figure illustrating the desired specification of edge detection.
+% Figure caption draft: A texture edge can pass near the center, occupy only
+% part of the patch, appear together with weaker secondary edges, or change
+% apparent dominance as zoom changes.
+
+\subsection{Patch-Level Edge Detection Pipeline}
+
+In computer vision, one common way to detect an edge at the pixel level is to
+analyze changes in image gradients along the $x$- and $y$-directions. The
+Canny edge detector is an example of this kind of gradient-based
+method~\cite{opencv_canny}.
+
+To aggregate gradient information across a whole patch, we use the structure
+tensor, a compact summary of local gradient variation ~\cite{khan_corner_detection,opencv_gst}. The structure tensor
+lets us aggregate gradient evidence across pixels in a controlled way instead
+of relying on a single center-pixel gradient. Because Monty generally
+emphasizes features near the center of a sensor patch, we apply radial
+weighting when aggregating the per-pixel structure tensors.
+
+% TODO: A small figure showing how edge angle is measured (image-x to image-y).
 
 The main algorithm that performs dominant edge detection, orientation
 estimation, edge strength computation, and coherence computation is
@@ -127,7 +124,9 @@ before being placed in the \texttt{rgba} field. Otherwise
 shift the gradients and the resulting edge orientation.
 
 The detector then converts the RGB patch to grayscale and computes Sobel
-gradients $I_x$ (gradient in $x$-direction) and $I_y$ (gradient in $y$-direction). From these gradients we can build structure tensor per pixel:
+gradients $I_x$ (gradient in the $x$-direction) and $I_y$ (gradient in the
+$y$-direction). From these gradients, we can build a structure tensor for each
+pixel:
 \[
   J =
   \begin{bmatrix}
@@ -136,7 +135,8 @@ gradients $I_x$ (gradient in $x$-direction) and $I_y$ (gradient in $y$-direction
   \end{bmatrix}
 \]
 
-The per-pixel tensors are then reduced to one representative tensor for the entire patch using a center-biased weighted averaging. The radial term makes
+The per-pixel tensors are then reduced to one representative tensor for the
+entire patch using a center-biased weighted average. The radial term makes
 central gradients count more than peripheral gradients, while the gradient
 magnitude term makes flat pixels contribute zero. This is what lets the
 detector estimate a dominant patch-level edge without becoming a pure
@@ -560,6 +560,7 @@ Helper Functions:
 \end{itemize}
 
 \subsection{\texttt{TangentFrame}}
+\label{sec:tangent_frame}
 
 \textbf{The Problem.}
 As the 2D sensor moves across a curved 3D surface, we need to express
@@ -1231,5 +1232,8 @@ test_first_observation_initializes_2d_location_from_world_xy
 test_like_how_monty_uses_two_d_sm
 test_multi_step_2d_position_accumulated_on_flat_surface
 \end{verbatim}
+
+\bibliographystyle{unsrt}
+\bibliography{2dsm_refs}
 
 \end{document}
