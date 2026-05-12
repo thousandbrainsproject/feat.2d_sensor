@@ -197,7 +197,7 @@ Supporting signed polarity would therefore require an additional output field or
 
 The \texttt{angle} field in Table~\ref{tab:edge-features} is still an image-space measurement: it is measured from the image x-axis toward the image y-axis, i.e., downward in the image.
 To use that angle as a pose feature, \texttt{TwoDSensorModule} must express the detected edge in the module's transported local 2D coordinates.
-\texttt{\_angle\_to\_pose\_2d} performs this adapter step by converting the image-space edge angle into pose vectors in the current \texttt{TangentFrame}.
+\texttt{\_angle\_to\_pose\_2d} performs this adapter step by converting the image-space edge angle into pose vectors in the current \texttt{TangentFrame}; readers unfamiliar with that moving local basis may want to read Section~\ref{sec:tangent_frame} first.
 
 The conversion starts by mapping the image axes into world coordinates:
 \[
