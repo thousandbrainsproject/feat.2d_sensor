@@ -136,42 +136,60 @@ A clean straight edge has one large eigenvalue and one small eigenvalue; a corne
 \]
 Note that coherence has a range of $[0, 1]$ and values closer to 1 indicate presence of a clear edge. In Monty, only edges whose $\text{coherence} > 0.5$ is considered to be a true detected edge by default, though this can be adjusted by setting the \texttt{coherence\_threshold} for \texttt{EdgeDetector} in configurations.
 
-Finally, edge strength is defined as $\sqrt{\lambda_{\max}}$, and indicates the dominant gradient magnitude scale of the patch~\cite{khan_corner_detection,opencv_gst}. The example patches below should span different coherence and edge-strength values to give a qualitative sense of how these scores change across weak texture, clean straight edges, corners, and ambiguous gradient evidence.
+Next, edge strength is defined as $\sqrt{\lambda_{\max}}$, and indicates the dominant gradient magnitude scale of the patch~\cite{khan_corner_detection,opencv_gst}. The example patches below should span different coherence and edge-strength values to give a qualitative sense of how these scores change across weak texture, clean straight edges, corners, and ambiguous gradient evidence.
 
 % TODO: Add a figure showing example patches with their measured edge strength and coherence values, including weak low-coherence texture, weak coherent edges, strong coherent straight edges, and low-coherence corners or junctions.
 
-\texttt{EdgeDetector} also checks whether the detected RGB edge corresponds to a depth discontinuity, as we want to extract texture edges on a surface (e.g. logo on a mug), rather than object boundaries (e.g. mug against black void).
+Finally, \texttt{EdgeDetector} checks whether the detected RGB edge corresponds to a depth discontinuity, as we want to extract texture edges on a surface (e.g. logo on a mug), rather than object boundaries (e.g. mug against black void).
 To perform this check, it computes gradients on the depth patch and projects that gradient onto the direction perpendicular to the detected edge.
 If the depth gradient is above the default \texttt{depth\_edge\_threshold} of \texttt{0.01} meters, it indicates depth is changing rapidly across the detected edge and sets \texttt{is\_geometric\_edge} to \texttt{true}.
 
 % TODO: Add diagram / sketch of how geometric edge results in "no edge".
 
+The main detector parameters are summarized in Table~\ref{tab:edge-detector-parameters}.
 \begin{table}[ht]
   \centering
   \begin{tabular}{p{0.25\linewidth} p{0.13\linewidth} p{0.50\linewidth}}
     \hline
-    Parameter & Default & Control and rationale \\
+    Parameter & Default & Description \\
     \hline
-    \texttt{kernel\_size} & \texttt{7} & Gaussian smoothing of the per-pixel tensor field; a remnant from an earlier center-region detector and not independently tuned for full-patch aggregation. \\
-    \texttt{radius} & \texttt{14.0} & Radius of the center-biased weighting window; gives a practical center neighborhood within a $64 \times 64$ patch. \\
+    \texttt{kernel\_size} & \texttt{7} & Gaussian smoothing of the per-pixel tensor field. \\
+    \texttt{radius} & \texttt{14.0} & Radius of the center-biased weighting window suitable for $64 \times 64$ patch. \\
     \texttt{sigma\_r} & \texttt{7.0} & Falloff of the radial Gaussian weight; downweights peripheral gradients smoothly, with an empirical default. \\
     \texttt{coherence\_threshold} & \texttt{0.5} & Minimum orientation coherence for a detected edge; a middle-of-range requirement on a score bounded in $[0, 1]$. \\
     \texttt{strength\_threshold} & \texttt{0.1} & Minimum gradient strength for a detected edge; intentionally low so weak but coherent texture edges can still pass. \\
     \hline
   \end{tabular}
   \caption{Default \texttt{EdgeDetector} parameters.}
+  \label{tab:edge-detector-parameters}
 \end{table}
 
-The detector returns one dominant orientation.
-It cannot represent two edges, a corner, a junction, or repeated strokes in the same patch except by reducing coherence or producing a compromise orientation.
+The detector returns an \texttt{EdgeFeatures} object, summarized in Table~\ref{tab:edge-features}.
+This object separates measurements from decisions: \texttt{angle}, \texttt{strength}, and \texttt{coherence} describe the estimated edge evidence, while \texttt{has\_edge} is the final thresholded detector decision.
+\texttt{TwoDSensorModule.\_extract\_2d\_edge} first checks \texttt{has\_edge}, then rejects geometric edges using \texttt{is\_geometric\_edge}; only detected non-geometric edges are converted into 2D pose vectors.
+
+\begin{table}[ht]
+  \centering
+  \begin{tabular}{p{0.24\linewidth} p{0.18\linewidth} p{0.46\linewidth}}
+    \hline
+    Field & Type & Meaning \\
+    \hline
+    \texttt{angle} & float or \texttt{None} & Estimated dominant edge orientation; \texttt{None} when no reliable orientation was computed. \\
+    \texttt{strength} & float & Dominant gradient magnitude scale, computed from $\sqrt{\lambda_{\max}}$. \\
+    \texttt{coherence} & float & Orientation quality score in $[0, 1]$. \\
+    \texttt{is\_geometric\_edge} & bool & Whether the RGB edge also appears to be a depth discontinuity. \\
+    \texttt{has\_edge} & bool & Final detector decision after strength and coherence thresholds. \\
+    \hline
+  \end{tabular}
+  \caption{\texttt{EdgeFeatures} fields returned by \texttt{EdgeDetector}.}
+  \label{tab:edge-features}
+\end{table}
+
+These outputs also define the detector's limitations.
+The detector returns one dominant orientation, so it cannot represent two edges, a corner, a junction, or repeated strokes in the same patch except by reducing coherence or producing a compromise orientation.
+\texttt{angle is not None} is not equivalent to \texttt{has\_edge}: a weak or low-coherence patch can still have an estimated angle, but downstream code should treat \texttt{has\_edge} as the gate for usable edge features.
 The geometric edge check is also center-pixel based: it computes the full depth gradient image but samples only the center depth gradient for classification.
 A noisy center depth value can therefore mark a texture edge as geometric, or miss a depth discontinuity that is nearby but not centered.
-
-\textbf{Alternatives.}
-We explored well-known edge detection methods such as Canny edge detection, but Canny returns an edge-pixel mask rather than a compact dominant orientation, strength, and coherence for a patch.
-A single-pixel Sobel angle at the patch center would be closer to the old center-feature interpretation, but it is brittle when the edge is slightly off center or noisy at the exact center.
-A Gabor filter bank could test for edges at several orientations, but it requires choosing a discrete orientation grid and running multiple convolutions.
-The structure tensor gives a continuous orientation estimate in one pass while still allowing center bias through the weight map.
 
 \textbf{Future Work: Signed Edge Polarity.}
 
@@ -181,52 +199,6 @@ The current structure-tensor detector represents undirected edge orientation.
 A line at angle $\theta$ and the same line at angle $\theta + \pi$ describe the same edge.
 Future directional edges, such as distinguishing light-to-dark from dark-to-light, would require preserving gradient polarity somewhere else in the detector.
 The current tensor has already squared and multiplied gradients, so opposite gradient signs have been intentionally collapsed.
-
-% Comment: I feel like this should be included as part of the EdgeDetector section. 
-\subsection{Detector Output and Downstream Contract}
-
-\textbf{The Problem.}
-The edge detector produces several related quantities, and downstream code needs to distinguish measurement from decision.
-A patch can contain enough gradient evidence to estimate an orientation but still fail the detector's thresholds because the edge is too weak or the gradient evidence is not coherent enough.
-Conversely, a patch can fail before an orientation exists at all, such as a uniform patch or an edge rejected by \texttt{max\_center\_offset}.
-
-\textbf{The Solution.}
-\texttt{EdgeFeatures} is the handoff object returned by \texttt{EdgeDetector.\_\_call\_\_}.
-It stores:
-\begin{itemize}
-  \item \texttt{angle}: the estimated dominant edge orientation, or \texttt{None} when no reliable orientation was computed.
-  \item \texttt{strength}: the dominant gradient magnitude scale.
-  \item \texttt{coherence}: the orientation-quality score in $[0, 1]$.
-  \item \texttt{is\_geometric\_edge}: whether the RGB edge corresponds to a depth discontinuity.
-  \item \texttt{has\_edge}: the final thresholded detector decision.
-\end{itemize}
-\texttt{has\_edge} is the definitive decision flag.
-\texttt{angle} is an estimated dominant orientation whenever the detector has enough gradient evidence to compute one.
-A weak or low-coherence patch can therefore have a non-\texttt{None} \texttt{angle} while \texttt{has\_edge} is false.
-
-\textbf{Downstream Contract.}
-\texttt{TwoDSensorModule.\_extract\_2d\_edge} uses \texttt{has\_edge} as the first gate.
-If \texttt{has\_edge} is false, the original curvature-based pose is left unchanged.
-If \texttt{has\_edge} is true but \texttt{is\_geometric\_edge} is also true, the pose is also left unchanged, because the 2D sensor is trying to represent texture edges on a surface rather than object boundaries or surface creases.
-Only a detected non-geometric edge is converted into 2D pose vectors.
-
-\textbf{Gotchas.}
-\texttt{angle is not None} is not equivalent to \texttt{has\_edge}.
-Treating a non-\texttt{None} angle as a detected edge admits weak or incoherent patches into the 2D pose pipeline.
-Treating \texttt{has\_edge} as the gate preserves the detector's intended separation between diagnostic measurements and usable edge features.
-
-% Comment: The below limitation is not an issue, remove. 
-\textbf{Limitations.}
-The dataclass does not encode why detection failed.
-A uniform patch and an edge rejected by \texttt{max\_center\_offset} both return
-\begin{itemize}
-  \item \texttt{angle=None}
-  \item \texttt{strength=0.0}
-  \item \texttt{coherence=0.0}
-  \item \texttt{is\_geometric\_edge=False}
-  \item \texttt{has\_edge=False}
-\end{itemize}
-If future debugging or learning logic needs to distinguish these cases, the result type will need an explicit rejection reason.
 
 \subsection{Projecting Image-Space Edge Orientation into 2D Pose}
 
