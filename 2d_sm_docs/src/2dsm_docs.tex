@@ -136,39 +136,18 @@ A clean straight edge has one large eigenvalue and one small eigenvalue; a corne
 \]
 Note that coherence has a range of $[0, 1]$ and values closer to 1 indicate presence of a clear edge. In Monty, only edges whose $\text{coherence} > 0.5$ is considered to be a true detected edge by default, though this can be adjusted by setting the \texttt{coherence\_threshold} for \texttt{EdgeDetector} in configurations.
 
-Finally, edge strength is defined as $\sqrt{\lambda_{\max}}$~\cite{khan_corner_detection,opencv_gst}, and indicates the dominant gradient magnitude scale of the patch. The example patches below should span different coherence and edge-strength values to give a qualitative sense of how these scores change across weak texture, clean straight edges, corners, and ambiguous gradient evidence.
+Finally, edge strength is defined as $\sqrt{\lambda_{\max}}$, and indicates the dominant gradient magnitude scale of the patch~\cite{khan_corner_detection,opencv_gst}. The example patches below should span different coherence and edge-strength values to give a qualitative sense of how these scores change across weak texture, clean straight edges, corners, and ambiguous gradient evidence.
 
+% TODO: Add a figure showing example patches with their measured edge strength and coherence values, including weak low-coherence texture, weak coherent edges, strong coherent straight edges, and low-coherence corners or junctions.
 
-% TODO: Add a figure or table showing example patches with their measured edge strength and coherence values, including weak low-coherence texture, weak coherent edges, strong coherent straight edges, and low-coherence corners or junctions.
-
-\textbf{Center Bias and \texttt{max\_center\_offset}.}
-Radial weighting and \texttt{max\_center\_offset} solve different problems.
-Radial weighting is continuous and always participates in the orientation estimate: it downweights gradients far from the center but still allows a strong off-center edge to influence the aggregate.
-By contrast, \texttt{max\_center\_offset} is an optional hard rejection rule.
-Once an orientation has been estimated, the detector projects the weighted gradient evidence onto the detected edge normal and computes how far the weighted edge centerline is from the patch center.
-If that distance is larger than \texttt{max\_center\_offset}, the detector returns no edge.
-
-The default value is \texttt{None}, so this hard center check is disabled.
-The option is mainly useful for reducing extra edge clutter during visualization.
-It does not replace radial weighting, because it operates after the dominant orientation has already been estimated.
-
-% TODO: Add a figure showing the effect of max_center_offset. Suggested
-% layout: use the same RGB patch with several visible edges, then show
-% detections with max_center_offset disabled versus enabled. The caption should
-% emphasize that radial weighting continuously downweights peripheral
-% gradients, while max_center_offset is a hard rejection criterion for edges
-% whose weighted centerline is too far from the patch center.
-
-% Comment: The section below could be tighter/shorter. 
-\textbf{Geometric Edge Check.}
-\texttt{EdgeDetector} also checks whether the detected RGB edge corresponds to a depth discontinuity.
-It computes Sobel gradients on the depth patch, takes the depth gradient at the center pixel, and projects that gradient onto the direction perpendicular to the RGB edge.
-If this perpendicular depth gradient exceeds \texttt{depth\_edge\_threshold}, the edge is marked as a geometric edge.
+\texttt{EdgeDetector} also checks whether the detected RGB edge corresponds to a depth discontinuity, because \texttt{TwoDSensorModule} wants texture edges on a surface, such as a logo on a mug, rather than object boundaries or surface creases.
+To make this check, it computes Sobel gradients on the depth patch, samples the center-pixel depth gradient, and projects that gradient onto the direction perpendicular to the RGB edge.
+If the perpendicular depth gradient exceeds \texttt{depth\_edge\_threshold}, the detector marks the edge as geometric.
 
 % TODO: Add diagram / sketch of how geometric edge check works. 
 
-This matters because \texttt{TwoDSensorModule} is interested in texture edges on a 2D surface, such as the edge of a logo on a mug, not object boundaries or surface creases.
-\texttt{EdgeDetector} only reports \texttt{is\_geometric\_edge}; the filtering decision happens in \texttt{TwoDSensorModule.\_extract\_2d\_edge}.
+\texttt{EdgeDetector} only reports \texttt{is\_geometric\_edge}.
+\texttt{TwoDSensorModule} then makes the filtering decision in \texttt{\_extract\_2d\_edge}.
 The default \texttt{depth\_edge\_threshold} is \texttt{0.01}, which corresponds to about one centimeter when depth is measured in meters.
 
 % Comment: We need better explanation of what the parameters control first, and then the choices. 
