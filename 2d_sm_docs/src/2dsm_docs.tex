@@ -288,7 +288,7 @@ The edge pipeline defines an orientation feature at a single contact point.
 The movement pipeline defines how successive contacts become a 2D path on the object's surface.
 Two pieces make that possible: \texttt{TangentFrame} keeps a moving local coordinate system attached to the surface, and the arc-length correction helpers convert projected 3D steps into distances along the curved surface.
 
-\subsection{\texttt{TangentFrame}}
+\subsection{Maintaining a Moving Local Frame}
 \label{sec:tangent_frame}
 
 As the 2D sensor moves across a curved 3D surface, its tangent plane changes from point to point.
