@@ -249,6 +249,35 @@ The function returns a 2D-local pose, not a world-frame pose.
 The normal row is always $[0, 0, 1]$ because this pose is expressed in the 2D model's local coordinates after projection into the tangent frame.
 Callers that need a world-space tangent vector should use a separate helper rather than treating this returned pose as a world-coordinate orientation.
 More generally, any future reusable helper for \texttt{CameraSM} or another sensor module should make the target reference frame explicit: the edge orientation must be projected into the same frame in which the downstream learning module will later compare it.
+The reusable pattern is:
+
+\begin{verbatim}
+def image_angle_to_frame_vector(
+    angle,
+    cam_to_world,
+    frame_u,
+    frame_v,
+    frame_normal,
+):
+    R = cam_to_world[:3, :3]
+    image_x_world = R @ np.array([1.0, 0.0, 0.0])
+    image_y_world = R @ np.array([0.0, -1.0, 0.0])
+
+    edge_world = (
+        np.cos(angle) * image_x_world
+        + np.sin(angle) * image_y_world
+    )
+    edge_world = project_onto_tangent_plane(edge_world, frame_normal)
+
+    if np.linalg.norm(edge_world) < DEFAULT_TOLERANCE:
+        return None
+
+    edge_world = normalize(edge_world)
+    return np.array([
+        np.dot(edge_world, frame_u),
+        np.dot(edge_world, frame_v),
+    ])
+\end{verbatim}
 
 \section{Part II: Implementing 2D Movement}
 
