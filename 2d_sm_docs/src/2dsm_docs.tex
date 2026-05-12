@@ -15,6 +15,7 @@
 
 \begin{document}
 \maketitle
+\tableofcontents
 
 \section{Introduction}
 
@@ -375,544 +376,64 @@ A zero movement direction returns zero curvature because no directional correcti
 Given projected displacements $(du, dv)$ along basis vectors $(u, v)$, it computes the normal curvature in the $u$ and $v$ directions, then applies \texttt{arc\_from\_projection} to each component.
 The result is a pair of signed displacements whose magnitudes better approximate the distance traveled along the curved surface in each local 2D direction.
 
-\section{Putting it Together in TwoDSensorModule}
+\section{Putting it Together in \texttt{TwoDSensorModule}}
 
-The previous sections described edge extraction, tangent-frame transport, and
-arc-length correction as separate pieces. In the runtime implementation these
-pieces meet inside \texttt{TwoDSensorModule.step}. The method starts from the
-same raw-observation contract as a standard sensor module, but it changes the
-meaning of the outgoing message: the location and displacement are 2D
-coordinates embedded in a 3D-shaped Monty message, and an accepted texture
-edge is the only feature that makes the outgoing pose fully defined.
+The previous sections described the two ingredients of the module separately: edge detection provides an optional 2D pose feature, while tangent-frame transport and arc-length correction provide an accumulated surface chart.
+\texttt{TwoDSensorModule.step} is where those ingredients become one Monty message.
+It starts from the same raw-observation input as a standard sensor module, but the outgoing message has a different interpretation: location and displacement remain 3-vectors for compatibility, while their first two coordinates represent the 2D surface chart and their third coordinate is fixed at zero.
 
 \subsection{Runtime Flow in \texttt{step}}
 
-\textbf{What it does.}
-\texttt{step(ctx, observation, motor\_only\_step=False)} converts a raw sensor
-observation into a Monty message whose features remain compatible with the
-standard sensor-module API while its movement fields describe accumulated
-2D travel over the surface. It preserves the 3D curvature information needed
-for movement correction, optionally replaces the outgoing pose with a
-texture-edge pose, then rewrites the outgoing location and displacement into
-the 2D coordinate convention.
+At runtime, \texttt{step(ctx, observation, motor\_only\_step=False)} keeps two pose contracts alive at the same time.
+The original surface pose from \texttt{ObservationProcessor} is geometric: it contains the surface normal and principal curvature directions.
+The pose that may be sent downstream is semantic: if a texture edge is accepted, the outgoing \texttt{pose\_vectors} field is replaced with the 2D-local edge pose described in Section~\ref{edge_detection}.
+Those two meanings cannot safely share one array, so \texttt{step} saves the geometric pose before edge extraction has a chance to overwrite it.
 
-\textbf{Algorithm.}
+The runtime sequence is:
 \begin{enumerate}
-  \item If raw-observation logging is enabled, save the raw observation
-        together with the current sensor rotation and position before any
-        feature processing mutates the message state.
-  \item Run \texttt{ObservationProcessor.process(observation)}. This produces
-        the usual 3D surface state: location, on-object status, surface normal,
-        principal curvatures, curvature-derived pose vectors, and any requested
-        non-morphological features.
-  \item Copy the current pose vectors into
-        \texttt{curvature\_pose\_vectors}, and copy the current surface normal
-        into \texttt{true\_surface\_normal}. These copies happen before edge
-        extraction because edge extraction can overwrite the
-        \texttt{pose\_vectors} morphological feature.
-  \item Set the \texttt{pose\_fully\_defined} morphological flag to
-        \texttt{False}. Curvature directions no longer count as a fully defined
-        pose for this sensor module; only an accepted texture edge can restore
-        the flag to \texttt{True}.
-  \item If the state is usable and the center is on object, update the
-        transported \texttt{TangentFrame} from the saved surface normal. The
-        first on-object observation initializes the frame; later on-object
-        observations transport the same frame instance to the new normal.
-  \item If edge features were requested, call \texttt{\_extract\_2d\_edge}.
-        A detected texture edge replaces the outgoing pose vectors with a
-        2D-local edge pose and writes \texttt{edge\_strength} or
-        \texttt{coherence} when those features were requested. No-edge and
-        geometric-edge cases leave the curvature-derived pose vectors in the
-        message but keep \texttt{pose\_fully\_defined=False}.
-  \item Apply configured message noise while \texttt{use\_state} is still
-        true. If \texttt{motor\_only\_step} is set, force
-        \texttt{use\_state=False} so the message is not passed to a learning
-        module as a percept.
-  \item Call the 2D position update with the saved curvature pose and saved
-        surface normal. This projects the 3D movement into the tangent frame,
-        applies arc-length correction when curvature data is available, and
-        emits \texttt{location} and \texttt{displacement} as
-        \([x_{2d}, y_{2d}, 0]\).
-  \item Run the percept filter last. With the default
-        \texttt{PassthroughPerceptFilter}, this is a no-op; with a
-        \texttt{FeatureChangeFilter}, the comparison sees the final 2D message
-        rather than the intermediate 3D surface state.
+  \item If raw-observation logging is enabled, save the raw observation with the current sensor rotation and position before processing mutates the message state.
+  \item Run \texttt{ObservationProcessor.process(observation)} to produce the standard surface observation: 3D location, on-object status, surface normal, curvature information, pose vectors, and requested features.
+  \item Copy the current \texttt{pose\_vectors} into \texttt{curvature\_pose\_vectors}, and copy the current surface normal into \texttt{true\_surface\_normal}. These copies preserve the 3D surface geometry for tangent-frame transport and arc-length correction.
+  \item Reset \texttt{pose\_fully\_defined} to \texttt{False}. In this module, principal curvature directions do not count as a fully defined 2D pose; only an accepted texture edge can set the flag back to \texttt{True}.
+  \item If the observation is usable and the center pixel is on object, update the transported local frame from \texttt{true\_surface\_normal}. The first usable on-object observation initializes the \texttt{TangentFrame}, and later usable on-object observations transport the same frame to the new normal.
+  \item If edge features were requested, call \texttt{\_extract\_2d\_edge}. A non-geometric detected edge replaces the outgoing pose with a 2D-local edge pose and writes \texttt{edge\_strength} or \texttt{coherence} when those fields were requested. No-edge and geometric-edge cases leave the message without a fully defined edge pose.
+  \item Apply configured message noise while \texttt{use\_state} is still true. If \texttt{motor\_only\_step} is set, force \texttt{use\_state=False} so the message is not treated as a percept by a learning module.
+  \item Rewrite position and displacement into the 2D chart. The update projects the current 3D step into the transported tangent frame, optionally applies arc-length correction using the saved curvature pose, and emits \texttt{location} and \texttt{displacement} as \([x_{2d}, y_{2d}, 0]\).
+  \item Run the percept filter last, so filters such as \texttt{FeatureChangeFilter} see the final 2D message rather than the intermediate 3D surface observation.
 \end{enumerate}
 
-\textbf{Gotchas.}
-The saved \texttt{curvature\_pose\_vectors} and
-\texttt{true\_surface\_normal} are not redundant local variables. They preserve
-the original 3D surface geometry after edge extraction has had a chance to
-replace the outgoing pose. Arc-length correction needs the curvature frame
-that came from \texttt{ObservationProcessor}; using the edge pose instead would
-feed a texture tangent into a geometric curvature calculation and produce
-incorrect corrected displacements.
+The save-before-overwrite step is load-bearing.
+Before edge extraction, \texttt{pose\_vectors} means ``surface normal plus principal curvature directions'' in 3D world coordinates.
+After an accepted edge, the same field means ``2D model normal plus edge tangent and edge perpendicular'' in local 2D coordinates.
+Arc-length correction needs the first meaning, while downstream pose comparison needs the second.
+Saving \texttt{curvature\_pose\_vectors} and \texttt{true\_surface\_normal} lets both contracts coexist without changing Monty's message schema.
 
-\textbf{Subtle Details.}
-\texttt{pose\_fully\_defined} is reset before edge extraction because the
-standard observation processor can mark a curvature-derived 3D pose as fully
-defined, but \texttt{TwoDSensorModule} uses a narrower contract: the pose is
-fully defined only when a texture edge provides the in-plane direction. This
-keeps the downstream learning module from treating ordinary principal
-curvature directions as semantic 2D edge orientations.
+The 2D movement rewrite has its own state machine.
+If the observation is off object, the method emits zero displacement and leaves the previous on-object 3D and 2D locations unchanged.
+If this is the first on-object observation, it seeds \texttt{\_previous\_3d\_location} from the real 3D location and seeds \texttt{\_previous\_2d\_location} from the current world \(x, y\), then emits \([x, y, 0]\).
+On later on-object observations, it computes the 3D displacement from the previous on-object point, projects that displacement onto the tangent plane of \texttt{true\_surface\_normal}, and expresses the tangent component in the current transported basis:
+\[
+  du = d_{\mathrm{tan}} \cdot u,
+  \qquad
+  dv = d_{\mathrm{tan}} \cdot v
+\]
+If curvature magnitudes and the saved curvature pose are available, \((du, dv)\) are passed through \texttt{arc\_length\_corrected\_displacement}; otherwise the projected chord-length components are accumulated as-is.
+The final \((du, dv)\) is added to the private 2D location, emitted as \([du, dv, 0]\), and the accumulated location is emitted as \([x_{2d}, y_{2d}, 0]\).
 
-The tangent frame is updated before edge extraction so
-\texttt{\_angle\_to\_pose\_2d} can express the image-space edge angle in the
-current transported 2D frame. The frame is also updated before the 2D movement
-rewrite, so the same basis is used for pose conversion and displacement
-projection during the step.
+Several details follow from this ordering.
+The tangent frame is updated before edge extraction so the image-space edge angle can be projected into the current local 2D basis.
+The same transported basis is then reused for the movement update, so edge pose and displacement are expressed in the same local chart during the step.
+The 2D position update also runs after motor-only handling; a motor-only message can update the private trajectory even though \texttt{use\_state=False} prevents the message from being consumed as a percept.
 
-\textbf{Limitations.}
-The outgoing message keeps shape \((3,)\) for compatibility, but after
-the 2D position update the third coordinate is a dummy value fixed at zero. The
-first on-object observation seeds the 2D location from world \(x, y\), not from
-an object-intrinsic origin. As a result, two episodes that begin at different
-points on the same object produce 2D coordinate traces that are translated by
-their starting world \(x, y\), and their axes depend on the arbitrary initial
-\texttt{TangentFrame} basis.
+The outgoing 3-vector shape is a compatibility convention, not a claim that the module is still reporting a 3D position.
+After the 2D rewrite, the third coordinate of both location and displacement is a dummy value fixed at zero.
+The first two location coordinates also change meaning over time: the first on-object location is seeded from world \(x, y\), while later locations are accumulated tangent-frame displacements added to that seed.
+This works as an episode-local surface chart, but it does not make traces automatically comparable across different starting points or different initial tangent-frame orientations.
 
-\textbf{Alternatives Considered.}
-The obvious alternative is to run edge extraction first and then use the final
-message pose everywhere. That would make the message simpler, but it would
-collapse two different pose meanings into one field: texture-edge pose for the
-learning module and curvature pose for surface-distance correction. The current
-save-before-overwrite sequence keeps those contracts separate while preserving
-the existing Monty message schema.
-
-The runtime behavior above is covered most directly by:
-\begin{verbatim}
-test_first_observation_initializes_2d_location_from_world_xy
-test_tangent_frame_transported_not_recreated
-test_multi_step_2d_position_accumulated_on_flat_surface
-\end{verbatim}
-
-\subsection{Saving Curvature Pose Before Edge Pose}
-
-\textbf{What it does.}
-The save-before-overwrite step preserves the 3D curvature frame produced by
-\texttt{ObservationProcessor} before \texttt{\_extract\_2d\_edge} reuses the
-same \texttt{pose\_vectors} field for a different purpose. The saved
-\texttt{curvature\_pose\_vectors} and \texttt{true\_surface\_normal} are the
-geometry inputs for tangent-frame transport and arc-length correction; the
-possibly overwritten message pose is the semantic edge pose sent downstream.
-
-\textbf{Algorithm.}
-\begin{enumerate}
-  \item \texttt{ObservationProcessor} builds a 3D pose matrix from surface
-        geometry:
-        \[
-          \begin{bmatrix}
-            \text{surface normal} \\
-            \text{first principal curvature direction} \\
-            \text{second principal curvature direction}
-          \end{bmatrix}
-        \]
-  \item \texttt{step} saves a copy of that matrix and separately saves a copy
-        of row 0, the true 3D surface normal.
-  \item If a usable on-object observation is being processed, the tangent frame
-        is initialized or transported using \texttt{true\_surface\_normal}.
-  \item If edge extraction accepts a texture edge, \texttt{\_extract\_2d\_edge}
-        writes a new 2D-local pose matrix back into
-        \texttt{morphological\_features["pose\_vectors"]}:
-        \[
-          \begin{bmatrix}
-            [0, 0, 1] \\
-            \text{edge tangent in 2D coordinates} \\
-            \text{edge perpendicular in 2D coordinates}
-          \end{bmatrix}
-        \]
-  \item The later 2D position update receives the saved curvature pose, not the
-        outgoing edge pose. When arc correction is active, rows 1 and 2 of the
-        saved matrix remain the principal curvature directions required by
-        Euler's curvature formula.
-\end{enumerate}
-
-\textbf{Gotchas.}
-\texttt{pose\_vectors} means two incompatible things during one call to
-\texttt{step}. Before edge extraction, rows 1 and 2 are principal curvature
-directions in 3D world coordinates. After accepted edge extraction, rows 1 and
-2 are an edge tangent and perpendicular expressed in the 2D tangent-frame
-coordinates, while row 0 is the dummy 2D normal \([0, 0, 1]\). Calling
-\texttt{get\_surface\_normal()} or \texttt{get\_curvature\_directions()} after
-that overwrite returns the edge-pose interpretation, not the original surface
-geometry.
-
-\texttt{pose\_fully\_defined} follows the outgoing pose interpretation, not the
-saved curvature interpretation. A high-curvature surface can produce a fully
-defined principal-curvature frame in the standard observation processor, but
-\texttt{TwoDSensorModule} resets the flag to \texttt{False} and sets it back to
-\texttt{True} only for an accepted texture edge.
-
-\textbf{Subtle Details.}
-The copies are made before edge extraction and before message noise. This
-ordering gives \texttt{\_angle\_to\_pose\_2d} the true 3D surface normal for
-projecting the image-space edge direction, then gives the displacement update
-the same geometric normal for tangent-plane projection. Re-reading the surface
-normal from the message after edge extraction would read the 2D-local normal
-row \([0, 0, 1]\), which is a coordinate-system convention rather than the
-observed 3D surface normal.
-
-\texttt{.copy()} documents ownership. Edge extraction currently replaces the
-entire \texttt{pose\_vectors} array, so a simple local reference would still
-point at the old array. The copy also protects the saved curvature frame from
-future in-place edits to the same array object, which is the safer contract for
-a value that is passed to a later mathematical correction.
-
-\textbf{Limitations.}
-The save-before-overwrite pattern only preserves the geometry successfully
-computed for the current center point. If the standard processor returns
-invalid curvature directions or the message lacks usable curvature magnitudes,
-the later displacement update falls back to chord-length \((du, dv)\) rather
-than corrected arc length.
-
-There is also an implementation mismatch to track separately from this design:
-the standard processor writes \texttt{principal\_curvatures} as a
-non-morphological feature, while the current 2D position update looks in the
-morphological feature dictionary. In that runtime path, the saved curvature
-pose is still correct and necessary, but the arc-correction branch is skipped
-unless a caller supplies the curvatures where the update currently looks for
-them.
-
-\textbf{Alternatives Considered.}
-One alternative is to never overwrite \texttt{pose\_vectors}; the message could
-carry separate fields such as \texttt{curvature\_pose\_vectors} and
-\texttt{edge\_pose\_vectors}. That schema would make the two meanings explicit,
-but it would require downstream LM and CMP changes. The current implementation
-keeps the existing message shape and isolates the dual use inside the
-\texttt{step} method.
-
-Another alternative is to recompute curvature pose after edge extraction. That
-would avoid the saved local variables, but it would repeat an expensive
-surface-processing step and risk using a different neighborhood or validity
-state from the one that produced the outgoing observation. Saving the original
-geometry is cheaper and preserves one coherent snapshot for the whole step.
-
-\textbf{Relevant tests.}
-\begin{verbatim}
-test_extract_2d_edge_sets_edge_pose_and_features
-test_extract_2d_edge_ignores_no_edge
-test_extract_2d_edge_ignores_geometric_edge
-directional_curvature property tests
-\end{verbatim}
-
-\subsection{\texttt{\_update\_tangent\_frame}}
-
-\textbf{What it does.}
-\texttt{\_update\_tangent\_frame(surface\_normal\_3d)} keeps the sensor's
-local 2D coordinate frame attached to the observed surface. The first usable
-on-object observation creates the frame; later usable on-object observations
-parallel-transport that same frame to the new surface normal.
-
-\textbf{Algorithm.}
-\begin{enumerate}
-  \item Normalize the saved true 3D surface normal. This makes the wrapper
-        tolerant of small magnitude drift in upstream normal estimation.
-  \item If \texttt{self.\_tangent\_frame} is \texttt{None}, construct a new
-        \texttt{TangentFrame}. Its initial \(u\) and \(v\) axes are arbitrary
-        tangent-plane axes derived from the normal.
-  \item Otherwise, call \texttt{transport(surface\_normal\_3d)} on the existing
-        frame. Transport rotates the current \(u\) axis by the minimum rotation
-        that carries the previous normal to the new normal, then rebuilds
-        \(v = n \times u\).
-\end{enumerate}
-
-\textbf{Gotchas.}
-The method is called only when the observed state is usable and on object.
-Invalid observations and off-object observations do not initialize the frame
-and do not advance it. A long off-object interval therefore leaves the last
-on-object tangent frame in place until the next usable surface contact.
-
-The initial frame orientation is not canonical. A surface normal defines a
-tangent plane, but it does not define the \(u\) and \(v\) axes inside that
-plane. \texttt{TangentFrame} chooses those axes from an arbitrary reference
-axis, so the first on-object observation fixes the episode's local 2D axes.
-Two episodes that start from different surface normals get different initial
-2D coordinate frames even on the same object.
-
-\textbf{Subtle Details.}
-The same \texttt{TangentFrame} object is transported rather than recreated.
-This preserves the accumulated orientation of the local 2D chart. Recreating a
-new frame at each step would choose a fresh arbitrary tangent basis from the
-new normal, causing the meaning of \((du, dv)\) to rotate or jump between
-successive observations. The unit test that checks transport-not-recreation
-asserts that the frame object after the second step is the same object created
-on the first step.
-
-Transport depends on the saved \texttt{true\_surface\_normal}, not the
-outgoing edge pose. After edge extraction, the message pose normal is the
-2D-local row \([0, 0, 1]\). Transporting against that row would align the frame
-to a message convention instead of the actual 3D surface normal.
-
-The re-orthonormalization happens inside \texttt{TangentFrame.transport}, not
-inside this wrapper. After rotation, the transported \(u\) vector is projected
-back into the tangent plane and normalized, then \(v\) is recomputed as
-\(n \times u\). This keeps repeated transports from accumulating floating-point
-drift over long trajectories.
-
-\textbf{Limitations.}
-The frame encodes a local unrolling path, not an object-intrinsic coordinate
-system. Its orientation depends on the first surface normal and on the path of
-subsequent transported normals. Starting the same object from a different
-surface point changes the initial tangent basis and therefore rotates the
-resulting 2D trace.
-
-The wrapper normalizes the supplied normal and has no local fallback for a
-near-zero vector. If upstream surface-normal estimation produced a near-zero
-normal while still marking the observation usable, \texttt{normalize} would
-raise a \texttt{ValueError}. The intended guard is the
-\texttt{ObservationProcessor} validity path, which sets \texttt{use\_state}
-false when surface geometry is not valid.
-
-\textbf{Alternatives Considered.}
-One alternative is to define \(u\) and \(v\) directly from world axes at every
-step. That would make each frame deterministic from the current normal alone,
-but it would add arbitrary twist whenever the normal crosses the reference-axis
-singularity or moves around curved geometry. Parallel transport instead
-preserves the previous in-plane orientation and introduces only the rotation
-required by the changing surface normal.
-
-Another alternative is to express displacement in a fixed world frame and skip
-tangent-frame transport. That works only on surfaces whose tangent plane is
-approximately fixed. On a curved surface, the fixed world frame stops matching
-the local tangent plane, so accumulated \((x, y)\) displacement no longer
-represents surface travel in the unrolled 2D chart.
-
-\textbf{Relevant tests.}
-\begin{verbatim}
-test_tangent_frame_transported_not_recreated
-test_init_creates_orthonormal_frame
-test_transport_to_same_normal_is_noop
-test_transport_preserves_orthonormality
-test_accumulated_transports_stay_orthonormal
-\end{verbatim}
-
-\subsection{\texttt{\_update\_2d\_position\_and\_displacement}}
-
-\textbf{What it does.}
-\texttt{\_update\_2d\_position\_and\_displacement} rewrites the outgoing
-message location and displacement from 3D sensor coordinates into the
-accumulated 2D surface chart. It uses the transported tangent frame to express
-the current 3D step as \((du, dv)\), then stores the result in a 3D-shaped
-message with a dummy zero \(z\) coordinate.
-
-\textbf{Algorithm.}
-\begin{enumerate}
-  \item If the observation is off object, set displacement to \([0, 0, 0]\) and
-        return without changing the saved previous 3D or 2D locations.
-  \item Copy \texttt{observed\_state.location} into
-        \texttt{current\_3d\_location}. This preserves the real 3D position
-        before the method overwrites the outgoing message location with its 2D
-        representation.
-  \item If there is no previous 3D location, seed
-        \texttt{\_previous\_3d\_location} from the current 3D point and seed
-        \texttt{\_previous\_2d\_location} from the current world \(x, y\). Emit
-        location \([x, y, 0]\) and return.
-  \item Compute the 3D displacement from the previous on-object 3D point to the
-        current 3D point, then project that displacement onto the tangent plane
-        of the saved true surface normal.
-  \item If the projected tangent displacement has norm below
-        \texttt{DEFAULT\_TOLERANCE}, update the previous 3D location, emit zero
-        displacement, keep the previous 2D location unchanged, and return.
-  \item Express the tangent displacement in the current transported frame:
-        \[
-          du = d_{\mathrm{tan}} \cdot u,
-          \qquad
-          dv = d_{\mathrm{tan}} \cdot v
-        \]
-        where \(u\) and \(v\) are \texttt{basis\_u} and \texttt{basis\_v}.
-  \item If curvature magnitudes and saved curvature pose vectors are available,
-        pass \((du, dv)\) through \texttt{arc\_length\_corrected\_displacement}
-        so chord-length components become local surface arc lengths.
-  \item Add the final \((du, dv)\) to \texttt{\_previous\_2d\_location}, save
-        the current 3D point as the new previous 3D location, set displacement
-        to \([du, dv, 0]\), and set outgoing location to
-        \([x_{2d}, y_{2d}, 0]\).
-\end{enumerate}
-
-\textbf{Gotchas.}
-The first on-object observation initializes location state but does not emit a
-displacement field. Off-object observations explicitly emit zero displacement,
-and later on-object movement emits \([du, dv, 0]\), but the first contact is a
-seed rather than a movement measurement. Any downstream code that assumes every
-message has a displacement field must handle the first on-object message
-separately.
-
-Off-object observations do not reset \texttt{\_previous\_3d\_location} or
-\texttt{\_previous\_2d\_location}. The next on-object displacement is measured
-from the last on-object 3D point, not from the off-object sample. This preserves
-the last known surface coordinate through brief off-object observations, but a
-large return jump is accumulated as one surface displacement.
-
-The method does not check whether the message should be used as a percept. In
-\texttt{step}, it runs after message noise and after motor-only handling can
-disable percept use. A motor-only message can therefore update the private 2D
-trajectory even though the resulting message is not meant to be used by an LM.
-
-\textbf{Subtle Details.}
-The copy of \texttt{current\_3d\_location} is load-bearing. By the end of the
-method, \texttt{observed\_state.location} no longer contains the real 3D sensor
-location; it contains the accumulated 2D location embedded as \([x, y, 0]\).
-Without the saved copy, later updates to \texttt{\_previous\_3d\_location} would
-accidentally store the rewritten 2D coordinate instead of the observed 3D point.
-
-The near-zero tangent branch updates the previous 3D location but leaves the
-previous 2D location unchanged. This is the right behavior for movement along
-the surface normal or numerical jitter: the sensor has a new 3D reference point
-for the next step, but it has not moved across the unrolled surface chart.
-
-Projection happens before expressing the step in the tangent-frame basis. This
-removes displacement along the surface normal, so \((du, dv)\) measures motion
-within the tangent plane instead of raw Euclidean motion in world coordinates.
-The current \texttt{TangentFrame} basis is then used only as coordinates for
-that already-tangent vector.
-
-\textbf{Limitations.}
-The first 2D location is seeded from world \(x, y\), not from a canonical
-object-intrinsic origin. The accumulated coordinates therefore carry the
-translation and orientation of the first contact convention. They are useful as
-a continuous local chart within an episode, but they are not automatically
-aligned across episodes that start elsewhere on the object.
-
-The outgoing 2D state is encoded as a 3-vector for Monty message compatibility.
-The third coordinate in both location and displacement is fixed at zero and
-does not represent depth, height, curvature, or any other geometric quantity.
-
-The arc-correction branch currently depends on curvature magnitudes being
-present in the morphological feature dictionary. The standard observation
-processor writes that value as a non-morphological feature, so the default path
-uses chord-length \((du, dv)\) unless a caller supplies curvature magnitudes
-where this method currently looks for them.
-
-The method is private and relies on \texttt{step} to update the tangent frame
-before any nonzero on-object displacement is processed. A direct call with a
-previous 3D location but no \texttt{\_tangent\_frame} would fail when accessing
-\texttt{basis\_u} and \texttt{basis\_v}.
-
-\textbf{Alternatives Considered.}
-One alternative is to reset the previous locations whenever the sensor goes
-off object. That would avoid accumulating a large jump when contact resumes,
-but it would also fragment a trajectory whenever the detector briefly loses
-surface contact. The current behavior treats off-object messages as zero-motion
-gaps and preserves the last known surface coordinate.
-
-Another alternative is to emit raw world \(x, y\) on every step. That is simpler
-and matches flat surfaces aligned with the world \(xy\)-plane, but it fails on
-curved surfaces because the visible local surface moves through changing
-tangent planes. Accumulating tangent-frame displacements preserves a continuous
-unrolled chart instead.
-
-Emitting a true 2-vector would make the 2D convention explicit, but it would
-break the existing Monty message contract that locations and displacements are
-3-vectors. The dummy \(z=0\) coordinate keeps the message shape compatible while
-making the 2D reduction local to this sensor module.
-
-\textbf{Relevant tests.}
-\begin{verbatim}
-test_first_observation_initializes_2d_location_from_world_xy
-test_multi_step_2d_position_accumulated_on_flat_surface
-arc_from_projection property tests
-directional_curvature property tests
-\end{verbatim}
-
-\subsection{Location and Displacement Conventions}
-
-\textbf{What it does.}
-This convention layer keeps \texttt{TwoDSensorModule} compatible with Monty's
-3D message schema while using the first two coordinates as an accumulated 2D
-surface chart. The outgoing message still contains 3-vector locations and
-3-vector displacements, but the third coordinate is a dummy 2D channel fixed at
-zero.
-
-\textbf{Algorithm.}
-\begin{enumerate}
-  \item Receive the real 3D sensor location from \texttt{ObservationProcessor}.
-        This is the geometric location used internally to compute movement.
-  \item On the first on-object contact, initialize the private 2D state from
-        the real world \(x, y\) coordinates and emit location \([x, y, 0]\).
-  \item On later on-object contacts, compute an incremental tangent-frame
-        displacement \((du, dv)\), add it to the private accumulated 2D
-        location, and emit location \([x_{2d}, y_{2d}, 0]\).
-  \item Emit displacement as \([du, dv, 0]\) for nonzero tangent movement, and
-        as \([0, 0, 0]\) for off-object observations or near-zero tangent
-        movement. The first on-object contact seeds state and does not emit a
-        displacement field.
-\end{enumerate}
-
-\textbf{Gotchas.}
-The \(z\) coordinate in the outgoing message is not a height coordinate. It is
-always zero after the 2D position rewrite. Code that compares
-\texttt{TwoDSensorModule} locations against 3D sensor-module locations must not
-interpret matching shape as matching semantics.
-
-The first two coordinates change meaning after the first on-object contact.
-The first emitted location uses the world \(x, y\) of the contact point. Later
-locations are accumulated tangent-frame displacements added to that seed. On a
-flat world-\(xy\)-aligned surface those values match raw world \(x, y\); on a
-curved surface or a differently oriented visible plane they are local chart
-coordinates, not raw world coordinates.
-
-The displacement field is incremental while the location field is accumulated.
-\([du, dv, 0]\) describes the current step in the transported tangent frame;
-\([x_{2d}, y_{2d}, 0]\) describes the accumulated position in the episode's 2D
-chart. Treating displacement as an absolute 2D location would double-count
-movement or collapse the trajectory to per-step offsets.
-
-\textbf{Subtle Details.}
-The use of world \(x, y\) as the first seed is a compatibility convention, not a
-claim that the object has a world-\(xy\) intrinsic 2D coordinate system. It gives
-the first message a concrete 3-vector location without introducing a new origin
-field. After that, the transported tangent frame, not the world axes, defines
-the incremental coordinate directions.
-
-The dummy \(z=0\) coordinate keeps the message shape compatible with CMP and
-with learning-module code that expects 3-vectors. This avoids a schema split
-between 2D and 3D sensor modules, but it pushes the burden of interpretation
-onto the sensor-module contract: consumers must know that this sender's third
-coordinate carries no geometric information.
-
-\textbf{Limitations.}
-The convention does not make 2D traces automatically comparable across
-episodes. Different first contact points translate the chart, and different
-initial tangent-frame bases rotate it. A downstream learning module must either
-handle those differences or the system must provide an external canonical
-alignment.
-
-The convention is explicitly aligned with views whose relevant projection is
-world \(xy\). The class docstring calls out the failure mode: for a camera
-looking along the world \(x\)-axis, the visible plane is closer to \(yz\), but
-the initial emitted 2D location still uses world \(x, y\). In that view, the
-seed coordinate does not match the visible image plane.
-
-The first on-object message can contain a rewritten 2D location without a
-displacement field. This is consistent with the state-machine semantics: no
-previous on-object point exists yet, so there is no measured step. Consumers
-that require displacement on every used state need an explicit first-contact
-fallback.
-
-\textbf{Alternatives Considered.}
-One alternative is to emit a true 2-vector for 2D locations and displacements.
-That would make the coordinate dimensionality explicit, but it would require
-separate message handling in CMP and downstream learning modules. The current
-3-vector encoding preserves the existing schema.
-
-Another alternative is to define the first 2D location as \([0, 0, 0]\) and
-store all positions relative to first contact. That would remove the inherited
-world-\(xy\) translation, but it would also change the apparent location scale
-seen by existing consumers and would require a separate way to recover the
-contact point if needed for logging or alignment.
-
-A third alternative is to seed from the camera image plane rather than world
-\(x, y\). That would better match views that are not world-\(xy\)-aligned, but
-it would require a camera-frame convention for every sensor orientation. The
-current implementation keeps the seed simple and documents that non-\(xy\)
-views need a different projection convention.
-
-\textbf{Relevant tests.}
-\begin{verbatim}
-test_first_observation_initializes_2d_location_from_world_xy
-test_like_how_monty_uses_two_d_sm
-test_multi_step_2d_position_accumulated_on_flat_surface
-\end{verbatim}
+There is one implementation limitation to keep in mind when reading the current code.
+The 2D position update looks for \texttt{principal\_curvatures} in the morphological feature dictionary, while the standard observation processor stores that value as a non-morphological feature.
+The saved curvature pose is still necessary and correct, but the arc-correction branch is skipped in the default runtime path unless the curvature magnitudes are supplied where the update currently looks for them.
+Resolving that mismatch should be treated as a separate implementation fix rather than folded into the documentation contract.
 
 \bibliographystyle{unsrt}
 \bibliography{2dsm_refs}
