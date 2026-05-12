@@ -188,14 +188,10 @@ This object separates measurements from decisions: \texttt{angle}, \texttt{stren
 These outputs also define the detector's limitations.
 The detector returns one dominant orientation, so it cannot represent two edges, a corner, a junction, or repeated strokes in the same patch except by reducing coherence or producing a compromise orientation.
 \texttt{angle is not None} is not equivalent to \texttt{has\_edge}: a weak or low-coherence patch can still have an estimated angle, but downstream code should treat \texttt{has\_edge} as the gate for usable edge features.
-
-\textbf{Future Work: Signed Edge Polarity.}
-
-\texttt{TwoDSensorModule} currently only needs an undirected texture line.
-A line at angle $\theta$ and the same line at angle $\theta + \pi$ describe the same edge, so the structure-tensor detector fits that downstream contract.
-A future detector that distinguishes light-to-dark from dark-to-light transitions would need to preserve gradient polarity before the tensor aggregation step.
+\texttt{TwoDSensorModule} also currently only needs an undirected texture line: a line at angle $\theta$ and the same line at angle $\theta + \pi$ describe the same edge, so the structure-tensor detector fits that downstream contract.
+If future sensors need to distinguish light-to-dark from dark-to-light transitions, the detector would need to preserve gradient polarity before tensor aggregation.
 That information is not recoverable from the current structure tensor, because squaring and multiplying gradients intentionally collapses opposite gradient signs.
-Adding signed polarity would therefore require an additional output field or a separate detector path, and downstream code would need to decide whether pose extraction should consume the unsigned edge line, the signed transition direction, or both.
+Supporting signed polarity would therefore require an additional output field or a separate detector path, and downstream code would need to decide whether pose extraction should consume the unsigned edge line, the signed transition direction, or both.
 
 \subsection{Projecting Image-Space Edge Orientation into 2D Pose}
 
