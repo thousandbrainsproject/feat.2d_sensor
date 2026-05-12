@@ -142,11 +142,10 @@ Next, edge strength is defined as $\sqrt{\lambda_{\max}}$, and indicates the dom
 
 Finally, \texttt{EdgeDetector} checks whether the detected RGB edge corresponds to a depth discontinuity, as we want to extract texture edges on a surface (e.g. logo on a mug), rather than object boundaries (e.g. mug against black void).
 To perform this check, it computes gradients on the depth patch and projects that gradient onto the direction perpendicular to the detected edge.
-If the depth gradient is above the default \texttt{depth\_edge\_threshold} of \texttt{0.01} meters, it indicates depth is changing rapidly across the detected edge and sets \texttt{is\_geometric\_edge} to \texttt{true}.
+If the depth gradient is above the default \texttt{depth\_edge\_threshold} of \texttt{0.01} meters, it indicates depth is changing rapidly across the detected edge and sets \texttt{is\_geometric\_edge} to \texttt{true}; this depth cutoff and the main RGB edge-detection parameters are summarized in Table~\ref{tab:edge-detector-parameters}.
 
 % TODO: Add diagram / sketch of how geometric edge results in "no edge".
 
-The main detector parameters are summarized in Table~\ref{tab:edge-detector-parameters}.
 \begin{table}[ht]
   \centering
   \begin{tabular}{p{0.25\linewidth} p{0.13\linewidth} p{0.50\linewidth}}
@@ -158,6 +157,7 @@ The main detector parameters are summarized in Table~\ref{tab:edge-detector-para
     \texttt{sigma\_r} & \texttt{7.0} & Falloff of the radial Gaussian weight; downweights peripheral gradients smoothly, with an empirical default. \\
     \texttt{coherence\_threshold} & \texttt{0.5} & Minimum orientation coherence for a detected edge; a middle-of-range requirement on a score bounded in $[0, 1]$. \\
     \texttt{strength\_threshold} & \texttt{0.1} & Minimum gradient strength for a detected edge; intentionally low so weak but coherent texture edges can still pass. \\
+    \texttt{depth\_edge\_threshold} & \texttt{0.01} & Minimum perpendicular depth change for marking a detected RGB edge as geometric, assuming depth is measured in meters. \\
     \hline
   \end{tabular}
   \caption{Default \texttt{EdgeDetector} parameters.}
@@ -188,17 +188,14 @@ This object separates measurements from decisions: \texttt{angle}, \texttt{stren
 These outputs also define the detector's limitations.
 The detector returns one dominant orientation, so it cannot represent two edges, a corner, a junction, or repeated strokes in the same patch except by reducing coherence or producing a compromise orientation.
 \texttt{angle is not None} is not equivalent to \texttt{has\_edge}: a weak or low-coherence patch can still have an estimated angle, but downstream code should treat \texttt{has\_edge} as the gate for usable edge features.
-The geometric edge check is also center-pixel based: it computes the full depth gradient image but samples only the center depth gradient for classification.
-A noisy center depth value can therefore mark a texture edge as geometric, or miss a depth discontinuity that is nearby but not centered.
 
 \textbf{Future Work: Signed Edge Polarity.}
 
-% Comment: We should add like a small 'Future work' paragraph here before going to next section on gradient_to_tangent_angle. Specifically, think about how we could extend edge detection to be signed, so there is a sign for when we are going from light to dark parts of an image vs. dark to light parts of an image. 
-
-The current structure-tensor detector represents undirected edge orientation.
-A line at angle $\theta$ and the same line at angle $\theta + \pi$ describe the same edge.
-Future directional edges, such as distinguishing light-to-dark from dark-to-light, would require preserving gradient polarity somewhere else in the detector.
-The current tensor has already squared and multiplied gradients, so opposite gradient signs have been intentionally collapsed.
+\texttt{TwoDSensorModule} currently only needs an undirected texture line.
+A line at angle $\theta$ and the same line at angle $\theta + \pi$ describe the same edge, so the structure-tensor detector fits that downstream contract.
+A future detector that distinguishes light-to-dark from dark-to-light transitions would need to preserve gradient polarity before the tensor aggregation step.
+That information is not recoverable from the current structure tensor, because squaring and multiplying gradients intentionally collapses opposite gradient signs.
+Adding signed polarity would therefore require an additional output field or a separate detector path, and downstream code would need to decide whether pose extraction should consume the unsigned edge line, the signed transition direction, or both.
 
 \subsection{Projecting Image-Space Edge Orientation into 2D Pose}
 
