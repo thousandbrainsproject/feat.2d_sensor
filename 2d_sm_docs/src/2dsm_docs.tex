@@ -195,11 +195,9 @@ Supporting signed polarity would therefore require an additional output field or
 
 \subsection{Projecting Image-Space Edge Orientation into 2D Pose}
 
-\texttt{EdgeDetector} is intentionally reusable.
-Its \texttt{EdgeFeatures} output includes an \texttt{angle} field for the dominant edge orientation, as summarized in Table~\ref{tab:edge-features}.
-The detected angle by itself is still viewpoint-dependent: it is measured from the image x-axis toward the image y-axis, i.e., downward in the image.
-Before \texttt{TwoDSensorModule} can use that angle as a pose feature, it must express the edge in the module's transported local 2D coordinates.
-\texttt{\_angle\_to\_pose\_2d} performs this adapter step: it converts the image-space edge angle into pose vectors in the current \texttt{TangentFrame}.
+The \texttt{angle} field in Table~\ref{tab:edge-features} is still an image-space measurement: it is measured from the image x-axis toward the image y-axis, i.e., downward in the image.
+To use that angle as a pose feature, \texttt{TwoDSensorModule} must express the detected edge in the module's transported local 2D coordinates.
+\texttt{\_angle\_to\_pose\_2d} performs this adapter step by converting the image-space edge angle into pose vectors in the current \texttt{TangentFrame}.
 
 The conversion starts by mapping the image axes into world coordinates:
 \[
