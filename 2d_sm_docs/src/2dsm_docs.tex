@@ -338,70 +338,42 @@ If the new normal is parallel to the old normal, the rotation step is skipped, b
   \caption{Parallel transport of the tangent frame from normal $n$ to a new normal $n'$.}
 \end{figure}
 
-\subsection{\texttt{arc\_from\_projection} and Arc-Length Correction}
+\subsection{Correcting Surface Displacement for Curvature}
 
-\textbf{The Problem.}
-When the sensor moves along a curved surface, the displacement we observe is a
-chord in the tangent plane, not the true distance traveled along the curve.
-On a convex surface the sensor must travel further than the straight-line
-projection suggests; without correction, accumulated 2D positions are
-systematically compressed relative to the actual surface path.
+The tangent frame gives each step a local 2D direction, but the raw displacement in that frame is still a tangent-plane projection.
+On a curved surface, that projection is a chord-like measurement: it is shorter than the distance traveled along the surface itself.
+Without a correction, the accumulated 2D path is systematically compressed on curved regions because each step records the flat projection rather than the surface arc.
 
-\textbf{The Solution.}
-At each surface point we fit an \emph{osculating circle}: the unique circle
-that is tangent to the surface and has the same normal curvature $k$ in the
-direction of movement. The osculating circle is the best local circular
-approximation to the curve, in the sense that it agrees with the curve up to
-second order. The approximation holds well when curvature is approximately
-constant over the displacement, but becomes inaccurate for surfaces with
-rapidly varying curvature (e.g., a sharp ridge crossed in a single large step).
-
-Under this assumption the relationship between tangent-plane chord $p$ and
-arc length $s$ is:
+\texttt{arc\_from\_projection} treats the surface locally as an osculating circle in the direction of motion.
+The circle has the same tangent and normal curvature $k$ as the surface at the current point, so it gives a local approximation of how a tangent-plane projection $p$ relates to a surface arc length $s$.
+Under that constant-curvature approximation:
 \[
   p = \frac{\sin(k \cdot s)}{k}
   \quad\Longrightarrow\quad
   s = \frac{\arcsin(k \cdot p)}{k}
 \]
-This is implemented in \texttt{arc\_from\_projection(tangent\_projection, curvature)}.
-Two guard conditions keep the formula numerically safe:
-\begin{itemize}
-  \item $|k \cdot p| < 0.001$: the surface is nearly flat over the step, so
-        $\arcsin(k p) \approx k p$ and no correction is applied.
-  \item $|k \cdot p| \geq 1.0$: the chord exceeds the radius of curvature,
-        meaning the sensor has moved past the most extreme visible point under
-        the constant-curvature assumption. The correction is skipped and a
-        warning is logged; the proper remedy is a policy that takes smaller 3D
-        steps.
-\end{itemize}
-The formula is sign-preserving (\texttt{np.copysign}) and works for both
-convex ($k > 0$) and concave ($k < 0$) surfaces because the arc-to-chord
-geometry on a circle is the same regardless of the sign of curvature.
+The implementation uses $|k|$ and $|p|$ for the magnitude calculation, then restores the sign of the original projected displacement with \texttt{np.copysign}.
+That makes the correction sign-preserving, and it also means convex and concave curvature use the same arc-to-projection geometry.
 
-\textbf{Helper: \texttt{directional\_curvature}.}
-Before correcting displacement we need the normal curvature $k$ in the
-direction of movement. Given principal curvatures $k_1, k_2$ and their
-directions $\hat{d}_1, \hat{d}_2$, Euler's curvature formula gives:
+Two regimes bypass the correction.
+If $|k \cdot p| < 0.001$, the local surface is effectively flat over the step, so $\arcsin(kp) \approx kp$ and the function returns the original projection.
+If $|k \cdot p| \geq 1.0$, the projection is outside the valid arcsine domain for this circle model.
+Geometrically, the projected step is at least as large as the radius of curvature, so the constant-curvature local model is no longer a reliable description of the step.
+In that case the function logs a warning and returns the original projection; the higher-level remedy is to take smaller 3D steps.
+
+The remaining question is which curvature $k$ to use for a displacement direction that is not exactly aligned with a principal curvature direction.
+\texttt{directional\_curvature} answers that with Euler's curvature formula.
+Given principal curvatures $k_1, k_2$ and their corresponding directions $\hat{d}_1, \hat{d}_2$:
 \[
   k(\theta) = k_1 \cos^2\theta + k_2 \sin^2\theta
 \]
 where $\theta$ is the angle between the movement direction and $\hat{d}_1$.
-\texttt{directional\_curvature} validates that $\hat{d}_1$ and $\hat{d}_2$
-are orthonormal and that the movement direction lies in their span before
-applying this formula.
+The helper validates that the principal curvature directions are unit, orthogonal vectors and that the movement direction lies in their plane before applying the formula.
+A zero movement direction returns zero curvature because no directional correction is needed.
 
-\textbf{Helper: \texttt{arc\_length\_corrected\_displacement}.}
-This function ties the two helpers together. Given tangent-frame displacements
-$(du, dv)$ along basis vectors $(u, v)$, it:
-\begin{enumerate}
-  \item Calls \texttt{directional\_curvature} once for $u$ and once for $v$
-        to obtain $k_u$ and $k_v$ from the observed principal curvatures and
-        their pose vectors.
-  \item Passes each chord-displacement through \texttt{arc\_from\_projection}
-        to obtain arc-length-corrected displacements $(\hat{u}, \hat{v})$.
-\end{enumerate}
-The result is a pair of corrected 2D displacements that accurately reflect the
-distance the sensor traveled along the surface in each tangent direction.
+\texttt{arc\_length\_corrected\_displacement} ties the two pieces together for a step represented in the transported tangent frame.
+Given projected displacements $(du, dv)$ along basis vectors $(u, v)$, it computes the normal curvature in the $u$ and $v$ directions, then applies \texttt{arc\_from\_projection} to each component.
+The result is a pair of signed displacements whose magnitudes better approximate the distance traveled along the curved surface in each local 2D direction.
 
 \section{Putting it Together in TwoDSensorModule}
 
