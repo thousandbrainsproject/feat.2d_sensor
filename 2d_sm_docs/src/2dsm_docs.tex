@@ -49,9 +49,10 @@ parts:
 % comparisons. The commented outline below preserves the current working list of
 % result topics and related Shortcut tickets.
 
-% Part I explains the image-gradient and structure-tensor path used to estimate
-% edge orientation in image space. Part II explains tangent-frame transport and
-% arc-length correction for 2D movement on curved surfaces. The final integration
+% The edge-detection section explains the image-gradient and structure-tensor path
+% used to estimate edge orientation in image space. The 2D movement section
+% explains tangent-frame transport and arc-length correction for movement on
+% curved surfaces. The final integration
 % section explains how \texttt{TwoDSensorModule.step} combines the saved surface
 % geometry, optional texture-edge pose, and 2D location/displacement convention
 % into one outgoing Monty message.
@@ -281,7 +282,7 @@ def image_angle_to_frame_vector(
 Here, \texttt{frame\_axis\_1} and \texttt{frame\_axis\_2} are the two target-frame axes used for the returned coordinates.
 \texttt{frame\_axis\_3} is the frame normal, which defines the plane in which the edge direction should be compared.
 
-\section{Part II: Implementing 2D Movement}
+\section{Implementing 2D Movement}
 
 The edge pipeline defines an orientation feature at a single contact point.
 The movement pipeline defines how successive contacts become a 2D path on the object's surface.
