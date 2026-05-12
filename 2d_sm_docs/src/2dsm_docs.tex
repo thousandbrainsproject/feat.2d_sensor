@@ -207,7 +207,7 @@ The conversion starts by mapping the image axes into world coordinates:
   \quad
   y_{\mathrm{img}}^{w} = R[0, -1, 0]^T
 \]
-where $R$ is the rotation component of \texttt{world\_camera}.
+where $R$ is the rotation component of \texttt{cam\_to\_world}.
 The negative sign in the image-y basis is load-bearing: image coordinates have positive y downward, while the camera/world convention used here treats positive y in the opposite direction.
 
 The edge angle then becomes a world-space direction:
