@@ -140,8 +140,9 @@ Finally, edge strength is defined as $\sqrt{\lambda_{\max}}$, and indicates the 
 
 % TODO: Add a figure showing example patches with their measured edge strength and coherence values, including weak low-coherence texture, weak coherent edges, strong coherent straight edges, and low-coherence corners or junctions.
 
-\texttt{EdgeDetector} also checks whether the detected RGB edge corresponds to a depth discontinuity, because \texttt{TwoDSensorModule} wants texture edges on a surface, such as a logo on a mug, rather than object boundaries or surface creases.
-To make this check, it computes Sobel gradients on the depth patch, samples the center-pixel depth gradient, and projects that gradient onto the direction perpendicular to the RGB edge.
+\texttt{EdgeDetector} also checks whether the detected RGB edge corresponds to a depth discontinuity, because \texttt{TwoDSensorModule} wants texture edges on a surface, such as a logo on a mug, rather than object boundaries such as a mug against the black void.
+To make this check, it computes gradients on the depth patch and projects that gradient onto the direction perpendicular to the detected edge.
+If the depth gradient is above the default \texttt{depth\_edge\_threshold} of \texttt{0.01} meters, it indicates depth is changing rapidly across the detected edge.
 If the perpendicular depth gradient exceeds \texttt{depth\_edge\_threshold}, the detector marks the edge as geometric.
 
 % TODO: Add diagram / sketch of how geometric edge check works. 
