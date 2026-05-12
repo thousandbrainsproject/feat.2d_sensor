@@ -130,15 +130,21 @@ For horizontal lines, the practical endpoint convention resolves to $\pi$ rather
 The first argument is \texttt{+0.0} because an ideal horizontal line has no horizontal-gradient component, so the cross term $J_{xy}=I_x I_y$ aggregates to zero; the second argument is negative because vertical gradient energy dominates, making $J_{xx} - J_{yy} < 0$.
 
 The aggregated tensor is a positive semi-definite matrix with two eigenvalues, $\lambda_{\min}$ and $\lambda_{\max}$, where $\lambda_{\min}, \lambda_{\max} \geq 0$.
+The eigenvectors of the aggregated tensor identify the directions of smallest and largest gradient variation: $\lambda_{\max}$ measures gradient energy in the dominant gradient direction, while $\lambda_{\min}$ measures gradient energy in the orthogonal direction.
+A clean straight edge has one large eigenvalue and one small eigenvalue; a corner, junction, or isotropic texture has two more similar eigenvalues because gradient energy exists in multiple directions.
 Edge strength is defined as $\sqrt{\lambda_{\max}}$.
+Its mathematical range is $[0, \infty)$, but in this detector it is finite because the inputs are finite grayscale Sobel gradients that are smoothed and averaged with finite weights; in current experiments, useful values were roughly in the $0$--$4$ range.
 Coherence is defined as:
 $
   \frac{\lambda_{\max} - \lambda_{\min}}
        {\lambda_{\max} + \lambda_{\min}}
 $.
+For positive semi-definite tensors, coherence is bounded in $[0, 1]$.
 
 Coherence measures how strongly the patch evidence prefers one orientation: it is high for a clean single edge and low for isotropic texture, corners, or multiple competing edge directions.
 The final boolean \texttt{has\_edge} is true only when edge strength exceeds \texttt{strength\_threshold} and coherence exceeds \texttt{coherence\_threshold}.
+
+% TODO: Add a figure or table showing example patches with their measured edge strength and coherence values, including weak low-coherence texture, weak coherent edges, strong coherent straight edges, and low-coherence corners or junctions.
 
 \textbf{Center Bias and \texttt{max\_center\_offset}.}
 Radial weighting and \texttt{max\_center\_offset} solve different problems.
