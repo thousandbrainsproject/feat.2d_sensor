@@ -430,6 +430,14 @@ After the 2D rewrite, the third coordinate of both location and displacement is 
 The first two location coordinates also change meaning over time: the first on-object location is seeded from world \(x, y\), while later locations are accumulated tangent-frame displacements added to that seed.
 This works as an episode-local surface chart, but it does not make traces automatically comparable across different starting points or different initial tangent-frame orientations.
 
+This \(z=0\) convention also carries a hidden view assumption.
+It works most naturally when the useful 2D chart can be treated as the first two coordinates of the outgoing message, as in a world-\(xy\)-aligned view.
+Setting a different coordinate to zero could also work in principle: \([0, x_{2d}, y_{2d}]\) or \([x_{2d}, 0, y_{2d}]\) would still embed a 2D chart in a 3D-shaped message.
+What matters mathematically is not that the dummy axis is specifically \(z\), but that the emitted locations lie in a consistent 2D affine subspace and that downstream consumers know which two coordinates carry the chart.
+The current implementation does not make that embedding configurable, so future work should separate the 2D chart coordinates from their 3D message embedding.
+One option would be to store true 2D coordinates internally and apply an explicit output basis, for example \(o + x_{2d} b_1 + y_{2d} b_2\), where \(b_1\) and \(b_2\) are the two chosen message-space axes.
+That would also allow embeddings whose three coordinates are all nonzero while still spanning only two dimensions, instead of requiring one coordinate to be identically zero.
+
 There is one implementation limitation to keep in mind when reading the current code.
 The 2D position update looks for \texttt{principal\_curvatures} in the morphological feature dictionary, while the standard observation processor stores that value as a non-morphological feature.
 The saved curvature pose is still necessary and correct, but the arc-correction branch is skipped in the default runtime path unless the curvature magnitudes are supplied where the update currently looks for them.
