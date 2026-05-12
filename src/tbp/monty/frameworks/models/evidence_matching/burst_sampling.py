@@ -14,7 +14,6 @@ from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
-from scipy.spatial.transform import Rotation
 from typing_extensions import Self
 
 from tbp.monty.frameworks.models.evidence_matching.channels import (
@@ -53,6 +52,7 @@ from tbp.monty.frameworks.utils.graph_matching_utils import (
 from tbp.monty.frameworks.utils.spatial_arithmetics import (
     align_multiple_orthonormal_vectors,
 )
+from tbp.monty.geometry import Rotation
 
 
 @dataclass
@@ -363,7 +363,9 @@ class BurstSamplingHypothesesUpdater:
         hypotheses_update = Hypotheses.concatenate(
             [existing_hypotheses, new_hypotheses]
         )
-        tracker.update(hypotheses_update.evidence)
+        tracker.update(
+            hypotheses_update.evidence, num_channels=len(input_channels_to_use)
+        )
 
         if self.include_telemetry:
             telemetry = asdict(
