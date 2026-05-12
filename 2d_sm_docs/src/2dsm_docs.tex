@@ -73,16 +73,11 @@ parts:
 \section{Detecting Dominant Texture-Edge Orientation in a Patch}
 \label{edge_detection}
 
-The goal of the edge-detection work was to detect the dominant texture-edge
-orientation in an image patch. Once detected, the edge orientation is 
-projected into the 2D tangent frame used by \texttt{TwoDSensorModule} (see
-Section~\ref{sec:tangent_frame}). Unlike some other features in Monty, which
-are read directly from the center pixel of a $64 \times 64$ patch, we wanted to extract the 
-dominant orientation across the \textit{whole} patch. This led to the development of 
-\texttt{EdgeDetector} (in \texttt{edge\_detection.py}), which extracts an edge angle between
-$(0, \pi]$ when a dominant edge is identified, along with supporting edge attributes. The Edge Detection module
-also provides a helper for projecting the detected image-space edge angle into
-the vectors expected by the chosen reference frame.
+The goal of the edge-detection work was to detect the dominant texture-edge orientation in an image patch.
+Once detected, the edge orientation is projected into the 2D tangent frame used by \texttt{TwoDSensorModule} (see Section~\ref{sec:tangent_frame}).
+Unlike some other features in Monty, which are read directly from the center pixel of a $64 \times 64$ patch, we wanted to extract the dominant orientation across the \textit{whole} patch.
+This led to the development of \texttt{EdgeDetector} (in \texttt{edge\_detection.py}), which extracts an edge angle between $(0, \pi]$ when a dominant edge is identified, along with supporting edge attributes.
+The Edge Detection module also provides a helper for projecting the detected image-space edge angle into the vectors expected by the chosen reference frame.
 
 % TODO: Add a figure demonstrating examples and desired properties of this
 % problem: centered edge, off-center edge, multiple competing edges, and the
@@ -94,39 +89,21 @@ the vectors expected by the chosen reference frame.
 
 \subsection{Patch-Level Edge Detection Pipeline}
 
-In computer vision, one common way to detect an edge at the pixel level is to
-analyze changes in image gradients along the $x$- and $y$-directions. The
-Canny edge detector is an example of this kind of gradient-based
-method~\cite{opencv_canny}.
+In computer vision, one common way to detect an edge at the pixel level is to analyze changes in image gradients along the $x$- and $y$-directions.
+The Canny edge detector is an example of this kind of gradient-based method~\cite{opencv_canny}.
 
-To aggregate gradient information across a whole patch, we use the structure
-tensor, a compact summary of local gradient variation ~\cite{khan_corner_detection,opencv_gst}. The structure tensor
-lets us aggregate gradient evidence across pixels in a controlled way instead
-of relying on a single center-pixel gradient. Because Monty generally
-emphasizes features near the center of a sensor patch, we apply radial
-weighting when aggregating the per-pixel structure tensors.
+To aggregate gradient information across a whole patch, we use the structure tensor, a compact summary of local gradient variation~\cite{khan_corner_detection,opencv_gst}.
+The structure tensor lets us aggregate gradient evidence across pixels in a controlled way instead of relying on a single center-pixel gradient.
 
 % TODO: A small figure showing how edge angle is measured (image-x to image-y).
 
-The main algorithm that performs dominant edge detection, orientation
-estimation, edge strength computation, and coherence computation is
-implemented by the \texttt{\_\_call\_\_} method of \texttt{EdgeDetector}.
+The following describes the main algorithm implemented in \texttt{EdgeDetector}.
+Given a \texttt{SensorObservation}, the detector first extracts the $(64, 64, 3)$ RGB patch and converts it to grayscale.
+The current Monty implementation stores \texttt{observation["rgba"]} in red-green-blue order, but users should be careful if they are using an alternate approach such as constructing images via OpenCV, as OpenCV's \texttt{cv2.imread} returns blue-green-red (BGR) images.
+Passing BGR data into \texttt{cv2.COLOR\_RGB2GRAY} changes the grayscale values that drive the gradient calculation.
 
-
-Given a \texttt{SensorObservation}, the detector first extracts
-\texttt{observation["rgba"][:, :, :3]} and interprets those channels as RGB.
-This is upheld by the current \texttt{SensorObservation} path, where the
-color patch is RGBA with red, green, and blue in that order. A caller that
-constructs observations from images loaded with OpenCV must be careful:
-\texttt{cv2.imread} returns BGR, so such images need to be converted to RGB
-before being placed in the \texttt{rgba} field. Otherwise
-\texttt{cv2.COLOR\_RGB2GRAY} uses the wrong luminance weights, which can
-shift the gradients and the resulting edge orientation.
-
-The detector then converts the RGB patch to grayscale and computes Sobel
-gradients $I_x$ (gradient in the $x$-direction) and $I_y$ (gradient in the
-$y$-direction). From these gradients, we can build a structure tensor for each
-pixel:
+From the grayscale image, the \texttt{EdgeDetector} computes Sobel gradients $I_x$ (gradient in the $x$-direction) and $I_y$ (gradient in the $y$-direction).
+From these gradients, we can build a structure tensor for each pixel of our $64 \times 64$ patch as follows:
 \[
   J =
   \begin{bmatrix}
@@ -135,43 +112,44 @@ pixel:
   \end{bmatrix}
 \]
 
-The per-pixel tensors are then reduced to one representative tensor for the
-entire patch using a center-biased weighted average. The radial term makes
-central gradients count more than peripheral gradients, while the gradient
-magnitude term makes flat pixels contribute zero. This is what lets the
-detector estimate a dominant patch-level edge without becoming a pure
-whole-image average.
+The per-pixel structure tensors are then reduced to a single aggregated $2 \times 2$ matrix for the entire patch using a center-biased weighted average, as Monty generally extracts features near the center of a sensor patch.
+The weight for each pixel is calculated as the product of Gaussian radial weighting (which gives more importance to center pixels) and gradient energy (which gives more importance to clear, strong edges).
 
-The aggregated tensor has two eigenvalues, $\lambda_{\min}$ and
-$\lambda_{\max}$. Edge strength is defined as $\sqrt{\lambda_{\max}}$.
+From the aggregated structure tensor, we can calculate the dominant gradient angle as follows:
+\[
+  \theta_\text{gradient} =
+    \frac{1}{2}
+    \arctan2(2J_{xy}, J_{xx} - J_{yy})
+\]
+The edge angle is perpendicular to this gradient direction:
+\[
+  \theta_\text{edge} = \theta_g + \frac{\pi}{2}
+\]
+In practice the detected edge orientation is undirected: angles that differ by $\pi$ describe the same edge line.
+For horizontal lines, the practical endpoint convention resolves to $\pi$ rather than $0$ because \texttt{arctan2(+0.0, negative)} returns $\pi$ under IEEE 754 signed-zero behavior~\cite{numpy_arctan2}.
+The first argument is \texttt{+0.0} because an ideal horizontal line has no horizontal-gradient component, so the cross term $J_{xy}=I_x I_y$ aggregates to zero; the second argument is negative because vertical gradient energy dominates, making $J_{xx} - J_{yy} < 0$.
+
+The aggregated tensor is a positive semi-definite matrix with two eigenvalues, $\lambda_{\min}$ and $\lambda_{\max}$, where $\lambda_{\min}, \lambda_{\max} \geq 0$.
+Edge strength is defined as $\sqrt{\lambda_{\max}}$.
 Coherence is defined as:
 $
   \frac{\lambda_{\max} - \lambda_{\min}}
        {\lambda_{\max} + \lambda_{\min}}
 $.
 
-Coherence measures how strongly the patch evidence prefers one orientation:
-it is high for a clean single edge and low for isotropic texture, corners, or
-multiple competing edge directions. The final boolean
-\texttt{has\_edge} is true only when edge strength exceeds
-\texttt{strength\_threshold} and coherence exceeds
-\texttt{coherence\_threshold}.
+Coherence measures how strongly the patch evidence prefers one orientation: it is high for a clean single edge and low for isotropic texture, corners, or multiple competing edge directions.
+The final boolean \texttt{has\_edge} is true only when edge strength exceeds \texttt{strength\_threshold} and coherence exceeds \texttt{coherence\_threshold}.
 
 \textbf{Center Bias and \texttt{max\_center\_offset}.}
 Radial weighting and \texttt{max\_center\_offset} solve different problems.
-Radial weighting is continuous and always participates in the orientation
-estimate: it downweights gradients far from the center but still allows a
-strong off-center edge to influence the aggregate. By contrast,
-\texttt{max\_center\_offset} is an optional hard rejection rule. Once an
-orientation has been estimated, the detector projects the weighted gradient
-evidence onto the detected edge normal and computes how far the weighted edge
-centerline is from the patch center. If that distance is larger than
-\texttt{max\_center\_offset}, the detector returns no edge.
+Radial weighting is continuous and always participates in the orientation estimate: it downweights gradients far from the center but still allows a strong off-center edge to influence the aggregate.
+By contrast, \texttt{max\_center\_offset} is an optional hard rejection rule.
+Once an orientation has been estimated, the detector projects the weighted gradient evidence onto the detected edge normal and computes how far the weighted edge centerline is from the patch center.
+If that distance is larger than \texttt{max\_center\_offset}, the detector returns no edge.
 
 The default value is \texttt{None}, so this hard center check is disabled.
-The option is mainly useful for reducing extra edge clutter during
-visualization. It does not replace radial weighting, because it operates
-after the dominant orientation has already been estimated.
+The option is mainly useful for reducing extra edge clutter during visualization.
+It does not replace radial weighting, because it operates after the dominant orientation has already been estimated.
 
 % TODO: Add a figure showing the effect of max_center_offset. Suggested
 % layout: use the same RGB patch with several visible edges, then show
@@ -182,72 +160,50 @@ after the dominant orientation has already been estimated.
 
 % Comment: The section below could be tighter/shorter. 
 \textbf{Geometric Edge Check.}
-\texttt{EdgeDetector} also checks whether the detected RGB edge corresponds
-to a depth discontinuity. It computes Sobel gradients on the depth patch,
-takes the depth gradient at the center pixel, and projects that gradient onto
-the direction perpendicular to the RGB edge. If this perpendicular depth
-gradient exceeds \texttt{depth\_edge\_threshold}, the edge is marked as a
-geometric edge.
+\texttt{EdgeDetector} also checks whether the detected RGB edge corresponds to a depth discontinuity.
+It computes Sobel gradients on the depth patch, takes the depth gradient at the center pixel, and projects that gradient onto the direction perpendicular to the RGB edge.
+If this perpendicular depth gradient exceeds \texttt{depth\_edge\_threshold}, the edge is marked as a geometric edge.
 
 % TODO: Add diagram / sketch of how geometric edge check works. 
 
-This matters because \texttt{TwoDSensorModule} is interested in texture
-edges on a 2D surface, such as the edge of a logo on a mug, not object
-boundaries or surface creases. \texttt{EdgeDetector} only reports
-\texttt{is\_geometric\_edge}; the filtering decision happens in
-\texttt{TwoDSensorModule.\_extract\_2d\_edge}. The default
-\texttt{depth\_edge\_threshold} is \texttt{0.01}, which corresponds to about
-one centimeter when depth is measured in meters.
+This matters because \texttt{TwoDSensorModule} is interested in texture edges on a 2D surface, such as the edge of a logo on a mug, not object boundaries or surface creases.
+\texttt{EdgeDetector} only reports \texttt{is\_geometric\_edge}; the filtering decision happens in \texttt{TwoDSensorModule.\_extract\_2d\_edge}.
+The default \texttt{depth\_edge\_threshold} is \texttt{0.01}, which corresponds to about one centimeter when depth is measured in meters.
 
 % Comment: We need better explanation of what the parameters control first, and then the choices. 
 \textbf{Parameter Choices and Limitations.}
 Several defaults are pragmatic rather than analytically derived.
-\texttt{kernel\_size=7} is a remnant from an earlier version that focused on
-edges in a small center region. \texttt{radius=14.0} was chosen as a
-reasonable center neighborhood for a $64 \times 64$ patch.
-\texttt{sigma\_r=7.0} controls the radial Gaussian falloff, but its exact
-value has not been justified independently. \texttt{coherence\_threshold=0.5}
-is a middle-of-range requirement on a score bounded between 0 and 1.
-\texttt{strength\_threshold=0.1} is intentionally low so weak but coherent
-texture edges are still detected.
+\texttt{kernel\_size=7} is a remnant from an earlier version that focused on edges in a small center region.
+\texttt{radius=14.0} was chosen as a reasonable center neighborhood for a $64 \times 64$ patch.
+\texttt{sigma\_r=7.0} controls the radial Gaussian falloff, but its exact value has not been justified independently.
+\texttt{coherence\_threshold=0.5} is a middle-of-range requirement on a score bounded between 0 and 1.
+\texttt{strength\_threshold=0.1} is intentionally low so weak but coherent texture edges are still detected.
 
-The detector returns one dominant orientation. It cannot represent two edges,
-a corner, a junction, or repeated strokes in the same patch except by reducing
-coherence or producing a compromise orientation. The geometric edge check is
-also center-pixel based: it computes the full depth gradient image but samples
-only the center depth gradient for classification. A noisy center depth value
-can therefore mark a texture edge as geometric, or miss a depth discontinuity
-that is nearby but not centered.
+The detector returns one dominant orientation.
+It cannot represent two edges, a corner, a junction, or repeated strokes in the same patch except by reducing coherence or producing a compromise orientation.
+The geometric edge check is also center-pixel based: it computes the full depth gradient image but samples only the center depth gradient for classification.
+A noisy center depth value can therefore mark a texture edge as geometric, or miss a depth discontinuity that is nearby but not centered.
 
 \textbf{Alternatives.}
-We explored well-known edge detection methods such as Canny edge detection,
-but Canny returns an edge-pixel mask rather than a compact dominant
-orientation, strength, and coherence for a patch. A single-pixel Sobel angle
-at the patch center would be closer to the old center-feature interpretation,
-but it is brittle when the edge is slightly off center or noisy at the exact
-center. A Gabor filter bank could test for edges at several orientations, but
-it requires choosing a discrete orientation grid and running multiple
-convolutions. The structure tensor gives a continuous orientation estimate in
-one pass while still allowing center bias through the weight map.
+We explored well-known edge detection methods such as Canny edge detection, but Canny returns an edge-pixel mask rather than a compact dominant orientation, strength, and coherence for a patch.
+A single-pixel Sobel angle at the patch center would be closer to the old center-feature interpretation, but it is brittle when the edge is slightly off center or noisy at the exact center.
+A Gabor filter bank could test for edges at several orientations, but it requires choosing a discrete orientation grid and running multiple convolutions.
+The structure tensor gives a continuous orientation estimate in one pass while still allowing center bias through the weight map.
 
 \subsection{Summarizing Gradient Evidence with a Structure Tensor}
 
 % Comment: The \textbf{} separation was added when outlining, but I think the document should read more naturally without these breaks. 
 
-\texttt{StructureTensor} is the compact representation used inside the
-detector after the patch has been converted into gradient evidence. A Sobel
-gradient at one pixel gives a local direction of intensity change, but a
-$64 \times 64$ sensor patch contains many such gradients. Some come from the
-dominant texture edge, some come from noise, and some come from secondary
-texture. The tensor summarizes whether the weighted patch contains one
-coherent orientation or many competing orientations.
+\texttt{StructureTensor} is the compact representation used inside the detector after the patch has been converted into gradient evidence.
+A Sobel gradient at one pixel gives a local direction of intensity change, but a $64 \times 64$ sensor patch contains many such gradients.
+Some come from the dominant texture edge, some come from noise, and some come from secondary texture.
+The tensor summarizes whether the weighted patch contains one coherent orientation or many competing orientations.
 
 % Comment: I don't think the below paragraph (before The Solution) is necessary. 
 
 % Comment: Again, get rid of \textbf{}. 
 
-For one local image region, the structure tensor stores second-order gradient
-statistics:
+For one local image region, the structure tensor stores second-order gradient statistics:
 \[
   J =
   \begin{bmatrix}
@@ -262,23 +218,16 @@ statistics:
 \]
 % Comment: Before the next sentence, we need to say "where I_x is ... and I_y is ... and Ix^2, Ixy, Iy^2 is... (i.e. define the terms). 
 
-where $I_x$ is the horizontal Sobel gradient, $I_y$ is the vertical Sobel
-gradient, $I_x^2$ and $I_y^2$ are the squared gradient energies in each image
-axis, and $I_x I_y$ is the cross term that records how the two gradient
-components vary together.
+where $I_x$ is the horizontal Sobel gradient, $I_y$ is the vertical Sobel gradient, $I_x^2$ and $I_y^2$ are the squared gradient energies in each image axis, and $I_x I_y$ is the cross term that records how the two gradient components vary together.
 
-In \texttt{EdgeDetector}, this tensor is first computed per pixel and
-Gaussian-smoothed, then the smoothed tensors are aggregated over the patch
-with center-biased weights. After aggregation, \texttt{StructureTensor}
-represents the dominant gradient statistics of the whole weighted patch.
+In \texttt{EdgeDetector}, this tensor is first computed per pixel and Gaussian-smoothed, then the smoothed tensors are aggregated over the patch with center-biased weights.
+After aggregation, \texttt{StructureTensor} represents the dominant gradient statistics of the whole weighted patch.
 
-The eigenvectors of $J$ identify the directions of smallest and largest
-gradient variation. The largest eigenvalue, $\lambda_{\max}$, measures how
-much gradient energy exists in the dominant gradient direction. The smallest
-eigenvalue, $\lambda_{\min}$, measures how much gradient energy exists in the
-orthogonal direction. A clean straight edge has one large eigenvalue and one
-small eigenvalue. A corner, junction, or isotropic texture has two more
-similar eigenvalues because gradient energy exists in multiple directions.
+The eigenvectors of $J$ identify the directions of smallest and largest gradient variation.
+The largest eigenvalue, $\lambda_{\max}$, measures how much gradient energy exists in the dominant gradient direction.
+The smallest eigenvalue, $\lambda_{\min}$, measures how much gradient energy exists in the orthogonal direction.
+A clean straight edge has one large eigenvalue and one small eigenvalue.
+A corner, junction, or isotropic texture has two more similar eigenvalues because gradient energy exists in multiple directions.
 
 \textbf{Orientation, Strength, and Coherence.}
 The dominant gradient direction is computed directly from the tensor entries:
@@ -289,19 +238,16 @@ The dominant gradient direction is computed directly from the tensor entries:
 \]
 
 % Comment: Make it clear that the range of values for the edge angle is (0, pi]. For horizontal lines, it will resolve to pi because of arctan2 and IEEE754. 
-The factor $\frac{1}{2}$ is load-bearing. The tensor describes orientation,
-not a signed vector direction, so the relevant space is modulo $\pi$ rather
-than modulo $2\pi$. The doubled-angle formula lets the tensor combine
-opposite gradients that correspond to the same undirected edge.
+The factor $\frac{1}{2}$ is load-bearing.
+The tensor describes orientation, not a signed vector direction, so the relevant space is modulo $\pi$ rather than modulo $2\pi$.
+The doubled-angle formula lets the tensor combine opposite gradients that correspond to the same undirected edge.
 
 \textbf{From Gradient Direction to Edge Tangent.}
 
 % Comment: The below shouldn't be its own section. 
 
-\texttt{StructureTensor.gradient\_theta} gives the dominant gradient
-direction, but the feature passed to the 2D sensor is an edge tangent. The
-gradient points normal to an edge: it points across the intensity change,
-not along the line that the sensor should use as the local edge direction.
+\texttt{StructureTensor.gradient\_theta} gives the dominant gradient direction, but the feature passed to the 2D sensor is an edge tangent.
+The gradient points normal to an edge: it points across the intensity change, not along the line that the sensor should use as the local edge direction.
 
 % Comment: We can just say that direction of edge is perpendicular to the dominant gradient direction. 
 The edge tangent is perpendicular to the gradient direction:
@@ -313,26 +259,20 @@ The edge tangent is perpendicular to the gradient direction:
 
 % Comment: Okay, I see that several comments from above are actually addressed in the below section. We don't need to go into this much depth on what the function does because the reader can read the code. It is more important to make it clear and concise, and explain the reasoning, logic, and high-level intuition. 
 
-The implementation wraps this value into the range used by the downstream
-edge pose code. In practice the detected edge orientation is undirected:
-angles that differ by $\pi$ describe the same edge line. For horizontal lines,
-the practical endpoint convention resolves to $\pi$ rather than $0$ because
-\texttt{arctan2(+0.0, negative)} returns $\pi$ under IEEE 754 signed-zero
-behavior.
+The implementation wraps this value into the range used by the downstream edge pose code.
 
 Edge strength is:
 \[
   \sqrt{\lambda_{\max}}
 \]
-This returns the dominant gradient magnitude scale rather than the squared
-energy scale stored in the tensor. Coherence is:
+This returns the dominant gradient magnitude scale rather than the squared energy scale stored in the tensor.
+Coherence is:
 \[
   \frac{\lambda_{\max} - \lambda_{\min}}
        {\lambda_{\max} + \lambda_{\min}}
 \]
-with a zero fallback when the eigenvalue difference is below tolerance. This
-score is close to 1 when the patch has one dominant orientation and close to
-0 when the gradient evidence is isotropic or ambiguous.
+with a zero fallback when the eigenvalue difference is below tolerance.
+This score is close to 1 when the patch has one dominant orientation and close to 0 when the gradient evidence is isotropic or ambiguous.
 
 % Comment: I don't think the below subtle details section is needed. 
 
@@ -341,60 +281,47 @@ score is close to 1 when the patch has one dominant orientation and close to
 % Comment: We should add like a small 'Future work' paragraph here before going to next section on gradient_to_tangent_angle. Specifically, think about how we could extend edge detection to be signed, so there is a sign for when we are going from light to dark parts of an image vs. dark to light parts of an image. 
 
 The current structure-tensor detector represents undirected edge orientation.
-A line at angle $\theta$ and the same line at angle $\theta + \pi$ describe
-the same edge. Future directional edges, such as distinguishing light-to-dark
-from dark-to-light, would require preserving gradient polarity somewhere else
-in the detector. The current tensor has already squared and multiplied
-gradients, so opposite gradient signs have been intentionally collapsed.
+A line at angle $\theta$ and the same line at angle $\theta + \pi$ describe the same edge.
+Future directional edges, such as distinguishing light-to-dark from dark-to-light, would require preserving gradient polarity somewhere else in the detector.
+The current tensor has already squared and multiplied gradients, so opposite gradient signs have been intentionally collapsed.
 
 % Comment: I feel like this should be included as part of the EdgeDetector section. 
 \subsection{Detector Output and Downstream Contract}
 
 \textbf{The Problem.}
-The edge detector produces several related quantities, and downstream code
-needs to distinguish measurement from decision. A patch can contain enough
-gradient evidence to estimate an orientation but still fail the detector's
-thresholds because the edge is too weak or the gradient evidence is not
-coherent enough. Conversely, a patch can fail before an orientation exists at
-all, such as a uniform patch or an edge rejected by \texttt{max\_center\_offset}.
+The edge detector produces several related quantities, and downstream code needs to distinguish measurement from decision.
+A patch can contain enough gradient evidence to estimate an orientation but still fail the detector's thresholds because the edge is too weak or the gradient evidence is not coherent enough.
+Conversely, a patch can fail before an orientation exists at all, such as a uniform patch or an edge rejected by \texttt{max\_center\_offset}.
 
 \textbf{The Solution.}
-\texttt{EdgeFeatures} is the handoff object returned by
-\texttt{EdgeDetector.\_\_call\_\_}. It stores:
+\texttt{EdgeFeatures} is the handoff object returned by \texttt{EdgeDetector.\_\_call\_\_}.
+It stores:
 \begin{itemize}
-  \item \texttt{angle}: the estimated dominant edge orientation, or
-        \texttt{None} when no reliable orientation was computed.
+  \item \texttt{angle}: the estimated dominant edge orientation, or \texttt{None} when no reliable orientation was computed.
   \item \texttt{strength}: the dominant gradient magnitude scale.
   \item \texttt{coherence}: the orientation-quality score in $[0, 1]$.
-  \item \texttt{is\_geometric\_edge}: whether the RGB edge corresponds to a
-        depth discontinuity.
+  \item \texttt{is\_geometric\_edge}: whether the RGB edge corresponds to a depth discontinuity.
   \item \texttt{has\_edge}: the final thresholded detector decision.
 \end{itemize}
-\texttt{has\_edge} is the definitive decision flag. \texttt{angle} is an
-estimated dominant orientation whenever the detector has enough gradient
-evidence to compute one. A weak or low-coherence patch can therefore have a
-non-\texttt{None} \texttt{angle} while \texttt{has\_edge} is false.
+\texttt{has\_edge} is the definitive decision flag.
+\texttt{angle} is an estimated dominant orientation whenever the detector has enough gradient evidence to compute one.
+A weak or low-coherence patch can therefore have a non-\texttt{None} \texttt{angle} while \texttt{has\_edge} is false.
 
 \textbf{Downstream Contract.}
-\texttt{TwoDSensorModule.\_extract\_2d\_edge} uses \texttt{has\_edge} as the
-first gate. If \texttt{has\_edge} is false, the original curvature-based pose
-is left unchanged. If \texttt{has\_edge} is true but
-\texttt{is\_geometric\_edge} is also true, the pose is also left unchanged,
-because the 2D sensor is trying to represent texture edges on a surface rather
-than object boundaries or surface creases. Only a detected non-geometric edge
-is converted into 2D pose vectors.
+\texttt{TwoDSensorModule.\_extract\_2d\_edge} uses \texttt{has\_edge} as the first gate.
+If \texttt{has\_edge} is false, the original curvature-based pose is left unchanged.
+If \texttt{has\_edge} is true but \texttt{is\_geometric\_edge} is also true, the pose is also left unchanged, because the 2D sensor is trying to represent texture edges on a surface rather than object boundaries or surface creases.
+Only a detected non-geometric edge is converted into 2D pose vectors.
 
 \textbf{Gotchas.}
-\texttt{angle is not None} is not equivalent to \texttt{has\_edge}. Treating a
-non-\texttt{None} angle as a detected edge admits weak or incoherent patches
-into the 2D pose pipeline. Treating \texttt{has\_edge} as the gate preserves
-the detector's intended separation between diagnostic measurements and usable
-edge features.
+\texttt{angle is not None} is not equivalent to \texttt{has\_edge}.
+Treating a non-\texttt{None} angle as a detected edge admits weak or incoherent patches into the 2D pose pipeline.
+Treating \texttt{has\_edge} as the gate preserves the detector's intended separation between diagnostic measurements and usable edge features.
 
 % Comment: The below limitation is not an issue, remove. 
 \textbf{Limitations.}
-The dataclass does not encode why detection failed. A uniform patch and an
-edge rejected by \texttt{max\_center\_offset} both return
+The dataclass does not encode why detection failed.
+A uniform patch and an edge rejected by \texttt{max\_center\_offset} both return
 \begin{itemize}
   \item \texttt{angle=None}
   \item \texttt{strength=0.0}
@@ -402,40 +329,31 @@ edge rejected by \texttt{max\_center\_offset} both return
   \item \texttt{is\_geometric\_edge=False}
   \item \texttt{has\_edge=False}
 \end{itemize}
-If future debugging or learning logic needs to distinguish these cases, the
-result type will need an explicit rejection reason.
+If future debugging or learning logic needs to distinguish these cases, the result type will need an explicit rejection reason.
 
 \subsection{Projecting Image-Space Edge Orientation into 2D Pose}
 
 \textbf{The Problem.}
-\texttt{EdgeDetector} is intentionally reusable. It can detect a dominant
-edge orientation for \texttt{TwoDSensorModule}, \texttt{CameraSM}, or any
-other sensor module that wants an image-space edge feature. The detected
-angle by itself is still viewpoint-dependent: it is measured from the image
-x-axis toward the image y-axis, i.e., downward in the image. A sensor module
-must decide which reference frame should receive that orientation.
+\texttt{EdgeDetector} is intentionally reusable.
+It can detect a dominant edge orientation for \texttt{TwoDSensorModule}, \texttt{CameraSM}, or any other sensor module that wants an image-space edge feature.
+The detected angle by itself is still viewpoint-dependent: it is measured from the image x-axis toward the image y-axis, i.e., downward in the image.
+A sensor module must decide which reference frame should receive that orientation.
 
-\texttt{\_angle\_to\_pose\_2d} is specifically the adapter for
-\texttt{TwoDSensorModule}. It converts an image-space edge angle into pose
-vectors expressed in the transported \texttt{TangentFrame}. This is different
-from the earlier \texttt{edge\_angle\_to\_2d\_pose} formulation, which used a
-scalar \texttt{world\_angle = ref - theta} and produced pose vectors in the
-world $xy$ plane. That older path was useful for a flat world-XY
-interpretation, but it was not the correct reference frame for the 2D sensor
-moving over a curved surface.
+\texttt{\_angle\_to\_pose\_2d} is specifically the adapter for \texttt{TwoDSensorModule}.
+It converts an image-space edge angle into pose vectors expressed in the transported \texttt{TangentFrame}.
+This is different from the earlier \texttt{edge\_angle\_to\_2d\_pose} formulation, which used a scalar \texttt{world\_angle = ref - theta} and produced pose vectors in the world $xy$ plane.
+That older path was useful for a flat world-XY interpretation, but it was not the correct reference frame for the 2D sensor moving over a curved surface.
 
 \textbf{The Solution.}
-The current function keeps the reference-frame conversion explicit. It first
-maps the image axes into world coordinates:
+The current function keeps the reference-frame conversion explicit.
+It first maps the image axes into world coordinates:
 \[
   x_{\mathrm{img}}^{w} = R[1, 0, 0]^T,
   \quad
   y_{\mathrm{img}}^{w} = R[0, -1, 0]^T
 \]
-where $R$ is the rotation component of \texttt{world\_camera}. The negative
-sign in the image-y basis is load-bearing: image coordinates have positive
-y downward, while the camera/world convention used here treats positive y in
-the opposite direction.
+where $R$ is the rotation component of \texttt{world\_camera}.
+The negative sign in the image-y basis is load-bearing: image coordinates have positive y downward, while the camera/world convention used here treats positive y in the opposite direction.
 
 The image-space edge angle is then converted into a world-space direction:
 \[
@@ -453,8 +371,8 @@ Finally, it is expressed in the transported tangent basis:
     0
   \end{bmatrix}
 \]
-where $u$ and $v$ are \texttt{tangent\_frame.basis\_u} and
-\texttt{tangent\_frame.basis\_v}. The returned pose vectors are:
+where $u$ and $v$ are \texttt{tangent\_frame.basis\_u} and \texttt{tangent\_frame.basis\_v}.
+The returned pose vectors are:
 \[
   \begin{bmatrix}
     0 & 0 & 1 \\
@@ -462,30 +380,23 @@ where $u$ and $v$ are \texttt{tangent\_frame.basis\_u} and
     -e_y^{2d} & e_x^{2d} & 0
   \end{bmatrix}
 \]
-The first row is the 2D model's normal. The second row is the edge tangent in
-local 2D coordinates. The third row is the in-plane perpendicular that
-completes a right-handed local pose.
+The first row is the 2D model's normal.
+The second row is the edge tangent in local 2D coordinates.
+The third row is the in-plane perpendicular that completes a right-handed local pose.
 
 \textbf{Subtle Details.}
-The current vector form was chosen because the target reference frame is the
-\texttt{TangentFrame}, not the world $xy$ plane. Projecting through world
-vectors before taking dot products with $(u, v)$ handles rotated cameras,
-tilted cameras, and arbitrary surface normals using the same code path. A
-scalar world-angle formula throws away this reference-frame distinction and
-implicitly assumes the output pose lives in the global $xy$ plane.
+The current vector form was chosen because the target reference frame is the \texttt{TangentFrame}, not the world $xy$ plane.
+Projecting through world vectors before taking dot products with $(u, v)$ handles rotated cameras, tilted cameras, and arbitrary surface normals using the same code path.
+A scalar world-angle formula throws away this reference-frame distinction and implicitly assumes the output pose lives in the global $xy$ plane.
 
 \textbf{Degenerate Projection.}
-If the projected edge direction has near-zero length, the function falls back
-to \texttt{tangent\_frame.basis\_u}. This is a defensive degeneracy fallback,
-not meaningful edge evidence. A near-zero projection means the image-space
-edge direction is effectively parallel to the surface normal, so it has no
-stable tangent-plane orientation. The fallback prevents NaNs and keeps the
-pose matrix well-formed, but it injects the current arbitrary local $u$
-direction.
+If the projected edge direction has near-zero length, the function falls back to \texttt{tangent\_frame.basis\_u}.
+This is a defensive degeneracy fallback, not meaningful edge evidence.
+A near-zero projection means the image-space edge direction is effectively parallel to the surface normal, so it has no stable tangent-plane orientation.
+The fallback prevents NaNs and keeps the pose matrix well-formed, but it injects the current arbitrary local $u$ direction.
 
 \textbf{CameraSM and General Reference Frames.}
-The previous PR branch included a helper for projecting an image-space edge
-angle into a 3D world tangent:
+The previous PR branch included a helper for projecting an image-space edge angle into a 3D world tangent:
 \begin{verbatim}
 edge_angle_to_3d_tangent
 \end{verbatim}
@@ -493,12 +404,10 @@ It was later removed when the 2D sensor path converged on:
 \begin{verbatim}
 _angle_to_pose_2d
 \end{verbatim}
-The removed helper remains a useful design reference for sensor modules that
-want edge orientation but do not want the \texttt{TangentFrame} output
-convention.
+The removed helper remains a useful design reference for sensor modules that want edge orientation but do not want the \texttt{TangentFrame} output convention.
 
-A general orientation projection helper should make the target reference
-frame explicit. The reusable pattern is:
+A general orientation projection helper should make the target reference frame explicit.
+The reusable pattern is:
 
 % Comment: Question - can this work for any dimension? 
 \begin{verbatim}
@@ -531,19 +440,14 @@ def image_angle_to_frame_vector(
         np.dot(feature_world, frame_v),
     ])
 \end{verbatim}
-For \texttt{TwoDSensorModule}, the frame inputs come from the transported
-\texttt{TangentFrame}. For \texttt{CameraSM}, they could instead be a
-camera-aligned surface basis, a world-frame surface basis, or another
-reference frame expected by the downstream learning module. The important
-invariant is that the feature orientation is projected into the same reference
-frame in which it will later be compared.
+For \texttt{TwoDSensorModule}, the frame inputs come from the transported \texttt{TangentFrame}.
+For \texttt{CameraSM}, they could instead be a camera-aligned surface basis, a world-frame surface basis, or another reference frame expected by the downstream learning module.
+The important invariant is that the feature orientation is projected into the same reference frame in which it will later be compared.
 
 \textbf{Limitations.}
-The function returns a 2D-local pose, not a world-frame pose. The normal row
-is always $[0, 0, 1]$ because this pose is expressed in the 2D model's local
-coordinates after projection into the tangent frame. Callers that need a
-world-space tangent vector should use a separate helper rather than treating
-this returned pose as a world-coordinate orientation.
+The function returns a 2D-local pose, not a world-frame pose.
+The normal row is always $[0, 0, 1]$ because this pose is expressed in the 2D model's local coordinates after projection into the tangent frame.
+Callers that need a world-space tangent vector should use a separate helper rather than treating this returned pose as a world-coordinate orientation.
 
 \section{Part II: Implementing 2D Movement}
 
