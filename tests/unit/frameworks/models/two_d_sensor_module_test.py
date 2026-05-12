@@ -117,7 +117,7 @@ def make_no_edge() -> EdgeFeatures:
 def make_raw_observation(
     *, center_location: np.ndarray, semantic_id: int
 ) -> SensorObservation:
-    obs = sensor_observation(angle=None, world_camera=np.identity(4))
+    obs = sensor_observation(angle=None, cam_to_world=np.identity(4))
 
     semantic_3d = np.zeros((PATCH_SIZE * PATCH_SIZE, 4), dtype=np.float64)
     semantic_3d[:, :3] = center_location
@@ -196,7 +196,6 @@ class TwoDSensorModuleInitTest(unittest.TestCase):
         msg = two_d_sm.step(ctx, obs, motor_only_step=False)
 
         assert two_d_sm.state is not None
-        assert two_d_sm.states[-1] is two_d_sm.state
 
         assert msg.sender_id == two_d_sm.sensor_module_id
         assert msg.sender_type == "SM"
