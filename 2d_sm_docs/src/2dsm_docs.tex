@@ -130,7 +130,7 @@ In practice the detected edge orientation is undirected: angles that differ by $
 For horizontal lines, the practical endpoint convention resolves to $\pi$ rather than $0$ because NumPy's \texttt{arctan2(+0.0, negative)} returns $\pi$ under IEEE 754 signed-zero behavior~\cite{numpy_arctan2}.
 The first argument is \texttt{+0.0} because an ideal horizontal line has no horizontal-gradient component, so the cross term $J_{xy}=I_x I_y$ aggregates to zero; the second argument is negative because vertical gradient energy dominates, making $J_{xx} - J_{yy} < 0$.
 
-The aggregated tensor is a positive semi-definite matrix with two eigenvalues, $\lambda_{\min}$ and $\lambda_{\max}$, where $\lambda_{\min}, \lambda_{\max} \geq 0$.
+The aggregated tensor is a positive semi-definite matrix with two eigenvalues, $\lambda_{\min}$ and $\lambda_{\max}$, where $\lambda_{\min}, \lambda_{\max} \geq 0$~\cite{khan_corner_detection,opencv_gst}.
 The eigenvectors of the aggregated tensor identify the directions of smallest and largest gradient variation: $\lambda_{\max}$ measures gradient energy in the dominant gradient direction, while $\lambda_{\min}$ measures gradient energy in the orthogonal direction.
 A clean straight edge has one large eigenvalue and one small eigenvalue; a corner, junction, or isotropic texture has two more similar eigenvalues because gradient energy exists in multiple directions.
 Edge strength is defined as $\sqrt{\lambda_{\max}}$.
