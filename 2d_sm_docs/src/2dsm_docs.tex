@@ -195,20 +195,13 @@ Supporting signed polarity would therefore require an additional output field or
 
 \subsection{Projecting Image-Space Edge Orientation into 2D Pose}
 
-\textbf{The Problem.}
 \texttt{EdgeDetector} is intentionally reusable.
-It can detect a dominant edge orientation for \texttt{TwoDSensorModule}, \texttt{CameraSM}, or any other sensor module that wants an image-space edge feature.
+It can detect a dominant edge orientation for any sensor module that wants an image-space edge feature.
 The detected angle by itself is still viewpoint-dependent: it is measured from the image x-axis toward the image y-axis, i.e., downward in the image.
-A sensor module must decide which reference frame should receive that orientation.
+Before \texttt{TwoDSensorModule} can use that angle as a pose feature, it must express the edge in the module's transported local 2D coordinates.
+\texttt{\_angle\_to\_pose\_2d} performs this adapter step: it converts the image-space edge angle into pose vectors in the current \texttt{TangentFrame}.
 
-\texttt{\_angle\_to\_pose\_2d} is specifically the adapter for \texttt{TwoDSensorModule}.
-It converts an image-space edge angle into pose vectors expressed in the transported \texttt{TangentFrame}.
-This is different from the earlier \texttt{edge\_angle\_to\_2d\_pose} formulation, which used a scalar \texttt{world\_angle = ref - theta} and produced pose vectors in the world $xy$ plane.
-That older path was useful for a flat world-XY interpretation, but it was not the correct reference frame for the 2D sensor moving over a curved surface.
-
-\textbf{The Solution.}
-The current function keeps the reference-frame conversion explicit.
-It first maps the image axes into world coordinates:
+The conversion starts by mapping the image axes into world coordinates:
 \[
   x_{\mathrm{img}}^{w} = R[1, 0, 0]^T,
   \quad
@@ -217,14 +210,13 @@ It first maps the image axes into world coordinates:
 where $R$ is the rotation component of \texttt{world\_camera}.
 The negative sign in the image-y basis is load-bearing: image coordinates have positive y downward, while the camera/world convention used here treats positive y in the opposite direction.
 
-The image-space edge angle is then converted into a world-space direction:
+The edge angle then becomes a world-space direction:
 \[
   e^w =
     \cos(\theta) x_{\mathrm{img}}^{w}
     + \sin(\theta) y_{\mathrm{img}}^{w}
 \]
-This vector is projected onto the local surface tangent plane and normalized.
-Finally, it is expressed in the transported tangent basis:
+This vector still lives in 3D camera/world geometry, so the function projects it onto the local surface tangent plane, normalizes it, and expresses it in the transported tangent basis:
 \[
   e^{2d} =
   \begin{bmatrix}
@@ -234,7 +226,7 @@ Finally, it is expressed in the transported tangent basis:
   \end{bmatrix}
 \]
 where $u$ and $v$ are \texttt{tangent\_frame.basis\_u} and \texttt{tangent\_frame.basis\_v}.
-The returned pose vectors are:
+The returned pose vectors use that local edge tangent as the second row:
 \[
   \begin{bmatrix}
     0 & 0 & 1 \\
@@ -246,70 +238,19 @@ The first row is the 2D model's normal.
 The second row is the edge tangent in local 2D coordinates.
 The third row is the in-plane perpendicular that completes a right-handed local pose.
 
-\textbf{Subtle Details.}
-The current vector form was chosen because the target reference frame is the \texttt{TangentFrame}, not the world $xy$ plane.
-Projecting through world vectors before taking dot products with $(u, v)$ handles rotated cameras, tilted cameras, and arbitrary surface normals using the same code path.
-A scalar world-angle formula throws away this reference-frame distinction and implicitly assumes the output pose lives in the global $xy$ plane.
+This vector form matters because the target reference frame is the \texttt{TangentFrame}, not the world $xy$ plane.
+Projecting through world vectors before taking dot products with $(u, v)$ handles rotated cameras, tilted cameras, and arbitrary surface normals with the same code path.
+The earlier scalar \texttt{world\_angle = ref - theta} formulation was useful for a flat world-XY interpretation, but it implicitly assumed the output pose lived in the global $xy$ plane and did not match the 2D sensor's moving tangent frame.
 
-\textbf{Degenerate Projection.}
-If the projected edge direction has near-zero length, the function falls back to \texttt{tangent\_frame.basis\_u}.
+If the projected edge direction has near-zero length, the function falls back to the local $u$ basis of the tangent frame.
 This is a defensive degeneracy fallback, not meaningful edge evidence.
 A near-zero projection means the image-space edge direction is effectively parallel to the surface normal, so it has no stable tangent-plane orientation.
 The fallback prevents NaNs and keeps the pose matrix well-formed, but it injects the current arbitrary local $u$ direction.
 
-\textbf{CameraSM and General Reference Frames.}
-The previous PR branch included a helper for projecting an image-space edge angle into a 3D world tangent:
-\begin{verbatim}
-edge_angle_to_3d_tangent
-\end{verbatim}
-It was later removed when the 2D sensor path converged on:
-\begin{verbatim}
-_angle_to_pose_2d
-\end{verbatim}
-The removed helper remains a useful design reference for sensor modules that want edge orientation but do not want the \texttt{TangentFrame} output convention.
-
-A general orientation projection helper should make the target reference frame explicit.
-The reusable pattern is:
-
-% Comment: Question - can this work for any dimension? 
-\begin{verbatim}
-def image_angle_to_frame_vector(
-    angle,
-    world_camera,
-    frame_u,
-    frame_v,
-    frame_normal,
-):
-    R = world_camera[:3, :3]
-    image_x_world = R @ np.array([1.0, 0.0, 0.0])
-    image_y_world = R @ np.array([0.0, -1.0, 0.0])
-
-    feature_world = (
-        np.cos(angle) * image_x_world
-        + np.sin(angle) * image_y_world
-    )
-    feature_world = project_onto_tangent_plane(
-        feature_world,
-        frame_normal,
-    )
-
-    if np.linalg.norm(feature_world) < DEFAULT_TOLERANCE:
-        return None
-
-    feature_world = normalize(feature_world)
-    return np.array([
-        np.dot(feature_world, frame_u),
-        np.dot(feature_world, frame_v),
-    ])
-\end{verbatim}
-For \texttt{TwoDSensorModule}, the frame inputs come from the transported \texttt{TangentFrame}.
-For \texttt{CameraSM}, they could instead be a camera-aligned surface basis, a world-frame surface basis, or another reference frame expected by the downstream learning module.
-The important invariant is that the feature orientation is projected into the same reference frame in which it will later be compared.
-
-\textbf{Limitations.}
 The function returns a 2D-local pose, not a world-frame pose.
 The normal row is always $[0, 0, 1]$ because this pose is expressed in the 2D model's local coordinates after projection into the tangent frame.
 Callers that need a world-space tangent vector should use a separate helper rather than treating this returned pose as a world-coordinate orientation.
+More generally, any future reusable helper for \texttt{CameraSM} or another sensor module should make the target reference frame explicit: the edge orientation must be projected into the same frame in which the downstream learning module will later compare it.
 
 \section{Part II: Implementing 2D Movement}
 
