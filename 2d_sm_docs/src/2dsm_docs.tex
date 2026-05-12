@@ -140,25 +140,27 @@ Finally, edge strength is defined as $\sqrt{\lambda_{\max}}$, and indicates the 
 
 % TODO: Add a figure showing example patches with their measured edge strength and coherence values, including weak low-coherence texture, weak coherent edges, strong coherent straight edges, and low-coherence corners or junctions.
 
-\texttt{EdgeDetector} also checks whether the detected RGB edge corresponds to a depth discontinuity, because \texttt{TwoDSensorModule} wants texture edges on a surface, such as a logo on a mug, rather than object boundaries such as a mug against the black void.
-To make this check, it computes gradients on the depth patch and projects that gradient onto the direction perpendicular to the detected edge.
-If the depth gradient is above the default \texttt{depth\_edge\_threshold} of \texttt{0.01} meters, it indicates depth is changing rapidly across the detected edge.
-If the perpendicular depth gradient exceeds \texttt{depth\_edge\_threshold}, the detector marks the edge as geometric.
+\texttt{EdgeDetector} also checks whether the detected RGB edge corresponds to a depth discontinuity, as we want to extract texture edges on a surface (e.g. logo on a mug), rather than object boundaries (e.g. mug against black void).
+To perform this check, it computes gradients on the depth patch and projects that gradient onto the direction perpendicular to the detected edge.
+If the depth gradient is above the default \texttt{depth\_edge\_threshold} of \texttt{0.01} meters, it indicates depth is changing rapidly across the detected edge and sets \texttt{is\_geometric\_edge} to \texttt{true}.
 
-% TODO: Add diagram / sketch of how geometric edge check works. 
+% TODO: Add diagram / sketch of how geometric edge results in "no edge".
 
-\texttt{EdgeDetector} only reports \texttt{is\_geometric\_edge}.
-\texttt{TwoDSensorModule} then makes the filtering decision in \texttt{\_extract\_2d\_edge}.
-The default \texttt{depth\_edge\_threshold} is \texttt{0.01}, which corresponds to about one centimeter when depth is measured in meters.
-
-% Comment: We need better explanation of what the parameters control first, and then the choices. 
-\textbf{Parameter Choices and Limitations.}
-Several defaults are pragmatic rather than analytically derived.
-\texttt{kernel\_size=7} is a remnant from an earlier version that focused on edges in a small center region.
-\texttt{radius=14.0} was chosen as a reasonable center neighborhood for a $64 \times 64$ patch.
-\texttt{sigma\_r=7.0} controls the radial Gaussian falloff, but its exact value has not been justified independently.
-\texttt{coherence\_threshold=0.5} is a middle-of-range requirement on a score bounded between 0 and 1.
-\texttt{strength\_threshold=0.1} is intentionally low so weak but coherent texture edges are still detected.
+\begin{table}[ht]
+  \centering
+  \begin{tabular}{p{0.25\linewidth} p{0.13\linewidth} p{0.50\linewidth}}
+    \hline
+    Parameter & Default & Control and rationale \\
+    \hline
+    \texttt{kernel\_size} & \texttt{7} & Gaussian smoothing of the per-pixel tensor field; a remnant from an earlier center-region detector and not independently tuned for full-patch aggregation. \\
+    \texttt{radius} & \texttt{14.0} & Radius of the center-biased weighting window; gives a practical center neighborhood within a $64 \times 64$ patch. \\
+    \texttt{sigma\_r} & \texttt{7.0} & Falloff of the radial Gaussian weight; downweights peripheral gradients smoothly, with an empirical default. \\
+    \texttt{coherence\_threshold} & \texttt{0.5} & Minimum orientation coherence for a detected edge; a middle-of-range requirement on a score bounded in $[0, 1]$. \\
+    \texttt{strength\_threshold} & \texttt{0.1} & Minimum gradient strength for a detected edge; intentionally low so weak but coherent texture edges can still pass. \\
+    \hline
+  \end{tabular}
+  \caption{Default \texttt{EdgeDetector} parameters.}
+\end{table}
 
 The detector returns one dominant orientation.
 It cannot represent two edges, a corner, a junction, or repeated strokes in the same patch except by reducing coherence or producing a compromise orientation.
@@ -170,8 +172,6 @@ We explored well-known edge detection methods such as Canny edge detection, but 
 A single-pixel Sobel angle at the patch center would be closer to the old center-feature interpretation, but it is brittle when the edge is slightly off center or noisy at the exact center.
 A Gabor filter bank could test for edges at several orientations, but it requires choosing a discrete orientation grid and running multiple convolutions.
 The structure tensor gives a continuous orientation estimate in one pass while still allowing center bias through the weight map.
-
-% Comment: I don't think the below subtle details section is needed. 
 
 \textbf{Future Work: Signed Edge Polarity.}
 
