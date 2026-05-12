@@ -115,22 +115,21 @@ From these gradients, we can build a structure tensor for each pixel of our $64 
 The per-pixel structure tensors are then reduced to a single aggregated $2 \times 2$ matrix for the entire patch using a center-biased weighted average, as Monty generally extracts features near the center of a sensor patch.
 The weight for each pixel is calculated as the product of Gaussian radial weighting (which gives more importance to center pixels) and gradient energy (which gives more importance to clear, strong edges).
 
-From the aggregated structure tensor, the dominant gradient angle follows the standard half-angle relation, evaluated with the two-argument arctangent so the quadrant is preserved:
+From the aggregated structure tensor, the dominant gradient angle can be computed using:
 \[
   \theta_\text{gradient} =
     \frac{1}{2}
-    \operatorname{atan2}(2J_{xy}, J_{xx} - J_{yy})
+    \operatorname{atan2}(2 * J_{xy}, J_{xx} - J_{yy})
 \]
-Equivalently, this is the quadrant-aware form of applying $\arctan$ to $2J_{xy} / (J_{xx} - J_{yy})$.
 The edge angle is perpendicular to this gradient direction:
 \[
-  \theta_\text{edge} = \theta_g + \frac{\pi}{2}
+  \theta_\text{edge} = \theta_\text{gradient} + \frac{\pi}{2}
 \]
-In practice the detected edge orientation is undirected: angles that differ by $\pi$ describe the same edge line.
-For horizontal lines, the practical endpoint convention resolves to $\pi$ rather than $0$ because NumPy's \texttt{arctan2(+0.0, negative)} returns $\pi$ under IEEE 754 signed-zero behavior~\cite{numpy_arctan2}.
+This maps detected edge angles into the range $\theta_\text{edge} \in (0, \pi]$.
+For horizontal lines, the edge angle resolves to $\pi$ rather than $0$ because NumPy's \texttt{arctan2(+0.0, negative)} returns $\pi$ under IEEE 754 signed-zero behavior~\cite{numpy_arctan2}.
 The first argument is \texttt{+0.0} because an ideal horizontal line has no horizontal-gradient component, so the cross term $J_{xy}=I_x I_y$ aggregates to zero; the second argument is negative because vertical gradient energy dominates, making $J_{xx} - J_{yy} < 0$.
 
-The aggregated tensor is a positive semi-definite matrix with two eigenvalues, $\lambda_{\min}$ and $\lambda_{\max}$, where $\lambda_{\min}, \lambda_{\max} \geq 0$~\cite{khan_corner_detection,opencv_gst}.
+The aggregated tensor is a positive semi-definite matrix~\cite{wikipedia_definite_matrix} with two eigenvalues, $\lambda_{\min}$ and $\lambda_{\max}$, where $\lambda_{\min}, \lambda_{\max} \geq 0$~\cite{khan_corner_detection,opencv_gst}.
 The eigenvectors of the aggregated tensor identify the directions of smallest and largest gradient variation: $\lambda_{\max}$ measures gradient energy in the dominant gradient direction, while $\lambda_{\min}$ measures gradient energy in the orthogonal direction.
 A clean straight edge has one large eigenvalue and one small eigenvalue; a corner, junction, or isotropic texture has two more similar eigenvalues because gradient energy exists in multiple directions.
 Edge strength is defined as $\sqrt{\lambda_{\max}}$.
