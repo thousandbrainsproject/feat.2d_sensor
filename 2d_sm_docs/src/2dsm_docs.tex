@@ -255,9 +255,9 @@ The reusable pattern is:
 def image_angle_to_frame_vector(
     angle,
     cam_to_world,
-    frame_u,
-    frame_v,
-    frame_normal,
+    frame_axis_1,
+    frame_axis_2,
+    frame_axis_3,
 ):
     R = cam_to_world[:3, :3]
     image_x_world = R @ np.array([1.0, 0.0, 0.0])
@@ -267,17 +267,19 @@ def image_angle_to_frame_vector(
         np.cos(angle) * image_x_world
         + np.sin(angle) * image_y_world
     )
-    edge_world = project_onto_tangent_plane(edge_world, frame_normal)
+    edge_world = project_onto_tangent_plane(edge_world, frame_axis_3)
 
     if np.linalg.norm(edge_world) < DEFAULT_TOLERANCE:
         return None
 
     edge_world = normalize(edge_world)
     return np.array([
-        np.dot(edge_world, frame_u),
-        np.dot(edge_world, frame_v),
+        np.dot(edge_world, frame_axis_1),
+        np.dot(edge_world, frame_axis_2),
     ])
 \end{verbatim}
+Here, \texttt{frame\_axis\_1} and \texttt{frame\_axis\_2} are the two target-frame axes used for the returned coordinates.
+\texttt{frame\_axis\_3} is the frame normal, which defines the plane in which the edge direction should be compared.
 
 \section{Part II: Implementing 2D Movement}
 
