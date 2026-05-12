@@ -283,52 +283,27 @@ Here, \texttt{frame\_axis\_1} and \texttt{frame\_axis\_2} are the two target-fra
 
 \section{Part II: Implementing 2D Movement}
 
-Key Functions:
-\begin{enumerate}
-  \item \texttt{TangentFrame}
-  \item \texttt{arc\_from\_projection}
-\end{enumerate}
-
-Helper Functions:
-\begin{itemize}
-  \item \texttt{directional\_curvature}
-  \item \texttt{arc\_length\_corrected\_displacement}
-\end{itemize}
+The edge pipeline defines an orientation feature at a single contact point.
+The movement pipeline defines how successive contacts become a 2D path on the object's surface.
+Two pieces make that possible: \texttt{TangentFrame} keeps a moving local coordinate system attached to the surface, and the arc-length correction helpers convert projected 3D steps into distances along the curved surface.
 
 \subsection{\texttt{TangentFrame}}
 \label{sec:tangent_frame}
 
-\textbf{The Problem.}
-As the 2D sensor moves across a curved 3D surface, we need to express
-sensor displacement in a consistent 2D coordinate frame. On a flat
-surface a fixed $(u, v)$ pair suffices, but on a curved surface the
-tangent plane rotates with the curvature. Naively accumulating
-displacement vectors in a fixed world frame causes the tracked position
-to drift off the surface.
+As the 2D sensor moves across a curved 3D surface, its tangent plane changes from point to point.
+A fixed world-frame pair of axes can describe motion on a flat plane, but it cannot stay attached to a curved surface.
+\texttt{TangentFrame} stores the moving local chart used by the 2D sensor: a right-handed orthonormal basis $(u, v, n)$, where $n$ is the current surface normal and $u$ and $v$ span the local tangent plane.
 
-\textbf{The Solution.}
-\texttt{TangentFrame} maintains a right-handed orthonormal basis
-$(u, v, n)$, where $n$ is the current surface normal, $u$ is the
-horizontal tangent direction, and $v$ is the vertical tangent direction.
-As the sensor moves to a new surface point, the method
-\texttt{transport(new\_normal)} updates the basis via
-\emph{parallel transport}---the unique minimum-rotation update that
-keeps $u$ and $v$ in the new tangent plane without introducing
-extraneous twist. This is the discrete analogue of parallel-transporting
-a vector along a geodesic on a Riemannian manifold
-(\texttt{https://en.wikipedia.org/wiki/Parallel\_transport}).
-
-\textbf{Initialization.}
-Given an initial surface normal $n$, the constructor builds $u$ and $v$
-as follows. It picks an arbitrary reference axis $a = [0, 1, 0]$,
-falling back to $a = [0, 0, 1]$ if $n$ is nearly parallel to $a$
-($|\cos\theta| > 1 - \epsilon$). Then:
+The initial normal determines the tangent plane, but it does not determine a unique pair of in-plane axes.
+The constructor therefore chooses an arbitrary reference axis $a = [0, 1, 0]$ and falls back to $a = [0, 0, 1]$ when the reference axis is nearly parallel to the normal.
+It then builds the basis with cross products:
 \begin{align*}
   u &= \mathrm{normalize}(a \times n) \\
   v &= \mathrm{normalize}(n \times u)
 \end{align*}
-The cross products ensure $u$ lies in the tangent plane and $(u, v, n)$
-forms a right-handed frame.
+These cross products put $u$ and $v$ in the tangent plane and make $(u, v, n)$ right-handed.
+The fallback axis only prevents a degenerate cross product; it does not make the initial 2D coordinate system canonical.
+Two episodes that start on different surface points can therefore begin with tangent frames that are rotated relative to one another.
 
 \begin{figure}[h]
   \centering
@@ -336,28 +311,25 @@ forms a right-handed frame.
   \caption{Initialization of the orthonormal tangent frame $(u, v, n)$ from a surface normal $n$.}
 \end{figure}
 
-\textbf{Parallel Transport.}
-When \texttt{transport(new\_normal)} is called with a new surface normal
-$n'$, the update proceeds in three steps:
-\begin{enumerate}
-  \item Compute the rotation $R$ that maps $n \to n'$ via the
-    axis-angle representation:
-    \[
-      \text{axis} = \mathrm{normalize}(n \times n'), \quad
-      \theta = \arccos(\mathrm{clip}(n \cdot n', -1, 1))
-    \]
-  \item Apply $R$ to $u$: this keeps $u$ as close as possible to its
-    previous direction while moving it into the new tangent plane.
-  \item Re-orthonormalize to suppress floating-point drift accumulated
-    over many steps:
-    \[
-      u \leftarrow \mathrm{normalize}(u - (u \cdot n') \, n'),
-      \quad v \leftarrow n' \times u
-    \]
-\end{enumerate}
-Step 3 is necessary because repeated small rotations accumulate
-numerical error; projecting $u$ back onto the tangent plane and
-recomputing $v$ from scratch keeps the frame exactly orthonormal.
+When the sensor reaches a new surface point, \texttt{transport(new\_normal)} moves the existing basis to the new tangent plane by the minimum rotation that maps the old normal $n$ to the new normal $n'$.
+If the normals are not parallel, the code constructs that rotation from the axis-angle representation:
+\[
+  \text{axis} = \mathrm{normalize}(n \times n'),
+  \quad
+  \theta = \arccos(\mathrm{clip}(n \cdot n', -1, 1))
+\]
+and applies the resulting rotation to $u$.
+This keeps $u$ as close as possible to its previous direction while moving it into the new tangent plane, which is the discrete analogue of parallel transport.
+
+After the rotation, the frame is re-orthonormalized:
+\[
+  u \leftarrow \mathrm{normalize}(u - (u \cdot n') \, n'),
+  \quad
+  v \leftarrow n' \times u
+\]
+This final projection is load-bearing.
+Repeated small transports accumulate floating-point error; projecting $u$ back onto the tangent plane and recomputing $v$ from scratch keeps the frame orthonormal over long trajectories.
+If the new normal is parallel to the old normal, the rotation step is skipped, but re-orthonormalization still runs so that the stored frame remains aligned with the supplied normal.
 
 \begin{figure}[h]
   \centering
