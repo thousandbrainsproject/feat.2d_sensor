@@ -1,7 +1,3 @@
-# configs for sanity check experiments during prototyping
-src/tbp/monty/conf
-!src/tbp/monty/conf/hydra
-
 # 2d_sm_docs
 2d_sm_docs/out/
 2d_sm_docs/imgs
