@@ -2,6 +2,10 @@
 
 Generates images with parallel diagonal lines on white background at
 three resolutions: 64x64, 32x32, and 16x16.
+
+Usage:
+From project root, run:
+
 """
 
 from pathlib import Path
@@ -157,12 +161,13 @@ def generate_diagonal_pattern(
 
 def main():
     """Generate diagonal line pattern images at three resolutions."""
-    output_dir = Path("results/diagonal_line_patterns")
+    output_dir = Path("data/edge_within_edge")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Base parameters for 64x64 (reference resolution)
     base_size = 64
     base_thickness = 1
+
     base_line_length = None  # Auto-calculate
     base_line_spacing = None  # Auto-calculate
     base_num_lines = None  # Auto-calculate
