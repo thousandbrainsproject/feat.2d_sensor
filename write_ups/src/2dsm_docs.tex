@@ -430,6 +430,11 @@ The 2D position update looks for \texttt{principal\_curvatures} in the morpholog
 The saved curvature pose is still necessary and correct, but the arc-correction branch is skipped in the default runtime path unless the curvature magnitudes are supplied where the update currently looks for them.
 Resolving that mismatch should be treated as a separate implementation fix rather than folded into the documentation contract.
 
+% Comment:
+% 1. Limitation: TwoDSensorModule can only be trained on single rotation (0, 0, 0)
+% 2. Limitation: Whether we can learn a perfectly unrolled surface depends on the Gaussian curvature (developable surface), things like sphere will introduce distortions, or have different learned models depending on the path Monty/agent takes to explore, but this hasn't been thoroughly studied. 
+% 3. Limitation: TwoDSensorModule hasn't been trained with PerceptFilter, i.e. every observation is sent to LM. It may be problematic to send with PerceptFilter because if we don't send information for a while, then our overall step size or 3D displacement may be large, and our estimatino for 2D displacement may not be as accurate. 
+% 4. The main thing is: we must take small steps. 
 \bibliographystyle{unsrt}
 \bibliography{2dsm_refs}
 
