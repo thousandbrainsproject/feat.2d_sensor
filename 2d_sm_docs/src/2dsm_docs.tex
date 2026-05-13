@@ -166,10 +166,6 @@ If the depth gradient is above the default \texttt{depth\_edge\_threshold} of \t
   \label{tab:edge-detector-parameters}
 \end{table}
 
-The detector returns an \texttt{EdgeFeatures} object, summarized in Table~\ref{tab:edge-features}.
-This object separates measurements from decisions: \texttt{angle}, \texttt{strength}, and \texttt{coherence} describe the estimated edge evidence, while \texttt{has\_edge} is the final thresholded detector decision.
-\texttt{TwoDSensorModule.\_extract\_2d\_edge} first checks \texttt{has\_edge}, then rejects geometric edges using \texttt{is\_geometric\_edge}; only detected non-geometric edges are converted into 2D pose vectors.
-
 \begin{table}[ht]
   \centering
   \begin{tabular}{p{0.24\linewidth} p{0.18\linewidth} p{0.46\linewidth}}
@@ -187,12 +183,14 @@ This object separates measurements from decisions: \texttt{angle}, \texttt{stren
   \label{tab:edge-features}
 \end{table}
 
-These outputs also define the detector's limitations.
-The detector returns one dominant orientation, so it cannot represent two edges, a corner, a junction, or repeated strokes in the same patch except by reducing coherence or producing a compromise orientation.
-\texttt{angle is not None} is not equivalent to \texttt{has\_edge}: a weak or low-coherence patch can still have an estimated angle, but downstream code should treat \texttt{has\_edge} as the gate for usable edge features.
-\texttt{TwoDSensorModule} also currently only needs an undirected texture line: a line at angle $\theta$ and the same line at angle $\theta + \pi$ describe the same edge, so the structure-tensor detector fits that downstream contract.
+A limitation of \texttt{EdgeDetector} is that it returns one dominant orientation per patch. If the patch contains more than one edge, then the result may output an orientation that is some 
+
+% Comment: Say that we use Zoom = 30 to increase our chance of having one edge per patch
+
+An enhancement to \texttt{EdgeDetector} would be to 
 If future sensors need to distinguish light-to-dark from dark-to-light transitions, the detector would need to preserve gradient polarity before tensor aggregation.
 That information is not recoverable from the current structure tensor, because squaring and multiplying gradients intentionally collapses opposite gradient signs.
+% Comment: I think we should state briefly how to overcome the previous sentence. 
 Supporting signed polarity would therefore require an additional output field or a separate detector path, and downstream code would need to decide whether pose extraction should consume the unsigned edge line, the signed transition direction, or both.
 
 \subsection{Projecting Image-Space Edge Orientation into 2D Pose}
@@ -208,7 +206,7 @@ The conversion starts by mapping the image axes into world coordinates:
   y_{\mathrm{img}}^{w} = R[0, -1, 0]^T
 \]
 where $R$ is the rotation component of \texttt{cam\_to\_world}.
-The negative sign in the image-y basis is load-bearing: image coordinates have positive y downward, while the camera/world convention used here treats positive y in the opposite direction.
+The negative sign in the image-y basis is load-bearing: image coordinates have positive y downward, while the camera/world convention used here treats positive y in the opposite (or upward) direction.
 
 The edge angle then becomes a world-space direction:
 \[
@@ -238,17 +236,6 @@ The first row is the 2D model's normal.
 The second row is the edge tangent in local 2D coordinates.
 The third row is the in-plane perpendicular that completes a right-handed local pose.
 
-This vector form matters because the target reference frame is the \texttt{TangentFrame}, not the world $xy$ plane.
-Projecting through world vectors before taking dot products with $(u, v)$ handles rotated cameras, tilted cameras, and arbitrary surface normals with the same code path.
-The earlier scalar \texttt{world\_angle = ref - theta} formulation was useful for a flat world-XY interpretation, but it implicitly assumed the output pose lived in the global $xy$ plane and did not match the 2D sensor's moving tangent frame.
-
-If the projected edge direction has near-zero length, the function falls back to the local $u$ basis of the tangent frame.
-This is a defensive degeneracy fallback, not meaningful edge evidence.
-A near-zero projection means the image-space edge direction is effectively parallel to the surface normal, so it has no stable tangent-plane orientation.
-The fallback prevents NaNs and keeps the pose matrix well-formed, but it injects the current arbitrary local $u$ direction.
-
-The function returns a 2D-local pose, not a world-frame pose.
-The normal row is always $[0, 0, 1]$ because this pose is expressed in the 2D model's local coordinates after projection into the tangent frame.
 Callers that need a world-space tangent vector should use a separate helper rather than treating this returned pose as a world-coordinate orientation.
 More generally, any future reusable helper for \texttt{CameraSM} or another sensor module should make the target reference frame explicit: the edge orientation must be projected into the same frame in which the downstream learning module will later compare it.
 The reusable pattern is:
