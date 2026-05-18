@@ -1,568 +1,703 @@
-"""Script to visualize the learned model using 2D Sensor Module."""
+# Copyright 2026 Thousand Brains Project
+#
+# Copyright may exist in Contributors' modifications
+# and/or contributions to the work.
+#
+# Use of this source code is governed by the MIT
+# license that can be found in the LICENSE file or at
+# https://opensource.org/licenses/MIT.
+
+# ruff: noqa: DOC201,DOC501
+
+"""Visualize learned 2D sensor object models.
+
+The visualizer renders learned graph-memory points with optional edge tangent and
+surface normal overlays. It is intentionally kept as one sandbox script, but the
+data preparation, layers, controls, and CLI are separated so future controls can
+be added without editing a large closure.
+"""
+
+from __future__ import annotations
 
 import argparse
+import traceback
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 import torch
-from matplotlib.colors import hsv_to_rgb
-from vedo import Plotter, Points, Line
 
-from model_loading_utils import load_object_model
+if __package__:
+    from .model_loading_utils import load_object_model
+else:
+    from model_loading_utils import load_object_model
 
-
-def _normalize_rows(V, eps=1e-12):
-    V = np.asarray(V, float)
-    n = np.linalg.norm(V, axis=1, keepdims=True)
-    n = np.maximum(n, eps)
-    return V / n
+if TYPE_CHECKING:
+    from vedo import Plotter
 
 
-def visualize_point_cloud_interactive(
-    model_data,
-    title=None,
-    arrow_scale=0.01,
-    *,
-    tangent_color="black",
-    tangent_lw=3,
-    show_unscaled_edge_lines=True,
-):
-    """Create interactive 3D visualization with Vedo.
+DEFAULT_EDGE_STRENGTH_THRESHOLD = 0.1
+DEFAULT_COHERENCE_THRESHOLD = 0.5
+DEFAULT_ARROW_SCALE = 0.01
+DEFAULT_UNSCALED_EDGE_SCALE = 0.002
+DEFAULT_POINT_SIZE = 10
+DEFAULT_TANGENT_LINE_WIDTH = 3
+DEFAULT_NORMAL_LINE_WIDTH = 2
+DEFAULT_WINDOW_SIZE = (1400, 1000)
+DEFAULT_BUTTON_POS = (0.85, 0.05)
+BUTTON_Y_SPACING = 0.08
+FALLBACK_POINT_COLOR = np.array([128, 128, 128], dtype=np.uint8)
 
-    Args:
-        model_data: dict with keys:
-            - points: (N,3) world coords
-            - features: dict. Expected options:
-                * 'pose_vectors': (N,3,3) with [normal, edge_tangent, edge_perp] per point
-                * 'edge_strength': (N,) edge magnitude; 'coherence': (N,) edge coherence
-                * optional 'rgba': (N,3 or 4)
-                * optional 'pose_fully_defined': (N,) binary or NaN indicating if pose is fully defined
-        title: window title.
-        arrow_scale: length (in world units) of each tangent line.
-        tangent_color: Vedo color for tangent lines.
-        tangent_lw: line width for tangent lines.
-        show_unscaled_edge_lines: If True, draw red unscaled edge lines.
+
+@dataclass(frozen=True)
+class VisualizationConfig:
+    """Runtime configuration for learned-model visualization."""
+
+    edge_strength_threshold: float = DEFAULT_EDGE_STRENGTH_THRESHOLD
+    coherence_threshold: float = DEFAULT_COHERENCE_THRESHOLD
+    arrow_scale: float = DEFAULT_ARROW_SCALE
+    unscaled_edge_scale: float = DEFAULT_UNSCALED_EDGE_SCALE
+    point_size: int = DEFAULT_POINT_SIZE
+    tangent_line_width: int = DEFAULT_TANGENT_LINE_WIDTH
+    normal_line_width: int = DEFAULT_NORMAL_LINE_WIDTH
+    show_scaled_edge_lines: bool = True
+    show_unscaled_edge_lines: bool = True
+    show_normals: bool = False
+    window_size: tuple[int, int] = DEFAULT_WINDOW_SIZE
+
+
+@dataclass(frozen=True)
+class PreparedModelView:
+    """Validated arrays used by the Vedo visualizer."""
+
+    points: np.ndarray
+    colors: np.ndarray
+    normals: np.ndarray | None
+    tangents: np.ndarray | None
+    edge_mask: np.ndarray | None
+    edge_scale_factors: np.ndarray | None
+    bounds_min: np.ndarray
+    bounds_max: np.ndarray
+    center: np.ndarray
+
+    @property
+    def has_edges(self) -> bool:
+        """Whether the view has enough data to render edge tangent overlays."""
+        return self.tangents is not None and self.edge_mask is not None
+
+    @property
+    def has_normals(self) -> bool:
+        """Whether the view has enough data to render surface normal overlays."""
+        return self.normals is not None
+
+
+@dataclass(frozen=True)
+class ControlSpec:
+    """Declarative button definition for a visualizer control."""
+
+    label_off: str
+    label_on: str
+    callback_name: str
+    enabled: Callable[[LearnedModelVisualizer], bool]
+    active: Callable[[LearnedModelVisualizer], bool]
+
+
+def normalize_rows_safe(values: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    """Normalize row vectors while leaving near-zero rows finite.
+
+    This is deliberately separate from
+    ``tbp.monty.frameworks.utils.spatial_arithmetics.normalize``, which is a
+    single-vector helper that raises on near-zero inputs. Visualization data can
+    contain invalid or zero rows, so this helper keeps array shape stable and the
+    caller filters invalid rows afterward.
     """
-    points = np.asarray(model_data["points"], float)
-    features = model_data["features"]
+    rows = np.asarray(values, dtype=float)
+    norms = np.linalg.norm(rows, axis=1, keepdims=True)
+    norms = np.maximum(norms, eps)
+    return rows / norms
 
-    # Debug: print available features and point cloud statistics
-    print(f"[viz] Available features: {list(features.keys())}")
-    print(f"[viz] Points shape: {points.shape}")
-    print("[viz] Point bounds:")
-    print(f"  X: [{points[:, 0].min():.3f}, {points[:, 0].max():.3f}]")
-    print(f"  Y: [{points[:, 1].min():.3f}, {points[:, 1].max():.3f}]")
-    print(f"  Z: [{points[:, 2].min():.3f}, {points[:, 2].max():.3f}]")
-    print(f"  Center: {points.mean(axis=0)}")
 
-    # State variables for edge lines
-    edge_lines = []
-    unscaled_edge_lines = []
+def _as_feature_array(value) -> np.ndarray:
+    """Convert tensors or array-like feature values to numpy arrays."""
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().numpy()
+    return np.asarray(value)
 
-    # State variables for normal lines
-    normal_lines = []
-    show_normals = False
 
-    # State variables for color mode
-    # Build list of available color modes
-    available_color_modes = []
-    mode_names = []
-    if "rgba" in features:
-        available_color_modes.append("rgba")
-        mode_names.append(" RGBA ")
-    if "hsv" in features:
-        available_color_modes.append("hsv")
-        mode_names.append(" HSV Color ")
-    if "pose_fully_defined" in features:
-        available_color_modes.append("pose_fully_defined")
-        mode_names.append(" Pose Defined ")
+def _extract_pose_vectors(
+    features: dict,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Extract surface normals and edge tangents from ``pose_vectors``."""
+    if "pose_vectors" not in features:
+        return None, None
 
-    # Debug: print available color modes
-    print(f"[viz] Available color modes: {available_color_modes}")
-    print(f"[viz] Mode names: {mode_names}")
+    pose_vectors = np.asarray(features["pose_vectors"], dtype=float)
+    if pose_vectors.ndim == 2 and pose_vectors.shape[1] == 9:
+        pose_vectors = pose_vectors.reshape(-1, 3, 3)
+    if pose_vectors.ndim != 3 or pose_vectors.shape[1:] != (3, 3):
+        print(
+            "[viz] Warning: expected pose_vectors with shape (N, 9) or "
+            f"(N, 3, 3), got {pose_vectors.shape}; skipping vector overlays."
+        )
+        return None, None
 
-    # Default to first available mode
-    color_mode_idx = 0
-    point_cloud_obj = None
+    return pose_vectors[:, 0, :], pose_vectors[:, 1, :]
 
-    # State variable for edge-only filter
-    show_edge_only = False
-    original_points = points.copy()
-    original_features = {
-        k: np.asarray(v) if isinstance(v, (list, np.ndarray)) else v
-        for k, v in features.items()
-    }
-    # original_edge_mask and original_tangents will be set after edge_mask and tangents are defined
 
-    def _get_colors_for_mode(mode_name, n_points):
-        """Get colors for the specified mode."""
-        if mode_name == "rgba" and "rgba" in features:
-            return features["rgba"][:, :3].astype(np.uint8).tolist()
-        if mode_name == "hsv" and "hsv" in features:
-            hsv_vals = np.asarray(features["hsv"], float)
-            rgb = hsv_to_rgb(hsv_vals)
-            return (rgb * 255).astype(np.uint8).tolist()
-        if mode_name == "pose_fully_defined" and "pose_fully_defined" in features:
-            pfd = np.asarray(features["pose_fully_defined"], float).reshape(-1)
-            n_pfd = len(pfd)
-            n_common = min(n_pfd, n_points)
+def _compute_rgba_colors(features: dict, n_points: int) -> np.ndarray:
+    """Return per-point RGB colors, falling back to gray when rgba is missing."""
+    colors = np.tile(FALLBACK_POINT_COLOR, (n_points, 1))
+    if "rgba" not in features:
+        return colors
 
-            colors = np.zeros((n_points, 3), dtype=np.uint8)
-            # Default all to gray (for any points beyond pfd length)
-            colors.fill(128)
+    rgba = np.asarray(features["rgba"])
+    if rgba.ndim != 2 or rgba.shape[1] < 3:
+        print(f"[viz] Warning: invalid rgba shape {rgba.shape}; using gray points.")
+        return colors
 
-            # Map: 1 -> green, 0 -> red, NaN -> gray
-            for i in range(n_common):
-                val = pfd[i]
-                if np.isnan(val):
-                    colors[i] = [128, 128, 128]  # gray
-                elif np.isclose(val, 1.0, atol=1e-6):
-                    colors[i] = [0, 255, 0]  # green
-                elif np.isclose(val, 0.0, atol=1e-6):
-                    colors[i] = [255, 0, 0]  # red
-                else:
-                    colors[i] = [128, 128, 128]  # gray (default for unexpected values)
+    n = min(n_points, rgba.shape[0])
+    colors[:n] = np.clip(rgba[:n, :3], 0, 255).astype(np.uint8)
+    return colors
 
-            return colors.tolist()
-        return None
 
-    def toggle_color_mode_callback(button, _event):
-        """Cycle through available color modes."""
-        nonlocal color_mode_idx, point_cloud_obj
-
-        if available_color_modes:
-            color_mode_idx = (color_mode_idx + 1) % len(available_color_modes)
-            button.switch()
-
-            if point_cloud_obj is not None:
-                n_points = len(points)
-                colors = _get_colors_for_mode(
-                    available_color_modes[color_mode_idx], n_points
-                )
-                if colors is not None:
-                    point_cloud_obj.pointcolors = colors
-                    plotter.render()
-
-    def toggle_edge_filter_callback(button, _event):
-        """Toggle between showing all points and only edge points."""
-        nonlocal show_edge_only, point_cloud_obj, points, features, tangents, edge_mask
-
-        show_edge_only = not show_edge_only
-        button.switch()
-
-        if original_edge_mask is None:
-            print(
-                "[viz] Warning: edge_strength/coherence not available, cannot filter edge points"
-            )
-            return
-
-        # Filter points based on edge_mask
-        if show_edge_only:
-            # Show only edge points (use original_edge_mask for filtering)
-            if original_edge_mask is None:
-                print("[viz] Warning: No original edge mask available")
-                return
-            edge_indices = np.where(original_edge_mask)[0]
-            if len(edge_indices) == 0:
-                print("[viz] Warning: No edge points found")
-                return
-
-            points = original_points[edge_indices]
-            # Filter features
-            features = {}
-            for key, value in original_features.items():
-                if isinstance(value, np.ndarray) and value.shape[0] == len(
-                    original_points
-                ):
-                    features[key] = value[edge_indices]
-                else:
-                    features[key] = value
-
-            # Update edge_mask and tangents to match filtered points
-            edge_mask = original_edge_mask[edge_indices]
-            if original_tangents is not None:
-                tangents = original_tangents[edge_indices]
-            else:
-                tangents = None
-
-            print(
-                f"[viz] Filtered to {len(points)} edge points (out of {len(original_points)} total)"
-            )
-        else:
-            # Show all points
-            points = original_points.copy()
-            features = {
-                k: v.copy() if isinstance(v, np.ndarray) else v
-                for k, v in original_features.items()
-            }
-            # Restore original edge_mask and tangents
-            edge_mask = (
-                original_edge_mask.copy() if original_edge_mask is not None else None
-            )
-            tangents = (
-                original_tangents.copy() if original_tangents is not None else None
-            )
-
-            print(f"[viz] Showing all {len(points)} points")
-
-        # Recreate point cloud with filtered points
-        if point_cloud_obj is not None:
-            plotter.remove(point_cloud_obj)
-
-        n_points = len(points)
-        if available_color_modes:
-            colors = _get_colors_for_mode(
-                available_color_modes[color_mode_idx], n_points
-            )
-            point_cloud_obj = Points(points, r=10)
-            if colors is not None:
-                point_cloud_obj.pointcolors = colors
-        else:
-            point_cloud_obj = Points(points, r=10).color("gray")
-
-        plotter.add(point_cloud_obj)
-
-        # Redraw edges with filtered points
-        if tangents is not None and edge_mask is not None:
-            draw_edges()
-
-        plotter.render()
-
-    plotter = Plotter(size=(1400, 1000), title=title or "Learned Point Cloud")
-
-    # ----- Point colors -----
-    n_points = len(points)
-    if available_color_modes:
-        # Use the default (first) color mode
-        colors = _get_colors_for_mode(available_color_modes[color_mode_idx], n_points)
-        point_cloud_obj = Points(points, r=10)
-        if colors is not None:
-            point_cloud_obj.pointcolors = colors
-        plotter.add(point_cloud_obj)
-    else:
-        point_cloud_obj = Points(points, r=10).color("gray")
-        plotter.add(point_cloud_obj)
-
-    # ----- Collect 3D edge tangents and surface normals (WORLD frame) -----
-    tangents = None
-    normals = None
-    if "pose_vectors" in features:
-        # Expect shape (N, 9) -> (N, 3, 3): [normal, edge_tangent, edge_perp]
-        pv = np.asarray(features["pose_vectors"], float)
-        if pv.ndim == 2 and pv.shape[1] == 9:
-            pv = pv.reshape(-1, 3, 3)
-        normals = pv[:, 0, :]
-        tangents = pv[:, 1, :]
-
-    # Replicate the original pose_from_edge logic: edge_strength > 0.1 AND coherence > 0.5
-    # (matches EdgeDetectionConfig defaults: strength_threshold=0.1, coherence_threshold=0.5)
+def _compute_edge_mask(
+    features: dict,
+    n_points: int,
+    config: VisualizationConfig,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Compute edge mask and tangent scale factors from edge features."""
     if "edge_strength" not in features or "coherence" not in features:
         print(
             "[viz] Warning: edge_strength/coherence not found in features. "
-            "Edge lines will not be drawn."
+            "Edge overlays and edge-only filtering will be unavailable."
         )
-        edge_mask = None
-    else:
-        es = np.asarray(features["edge_strength"], float).reshape(-1)
-        co = np.asarray(features["coherence"], float).reshape(-1)
-        n = min(len(es), len(co), len(points))
-        edge_mask = np.zeros(len(points), dtype=bool)
-        edge_mask[:n] = (es[:n] > 0.1) & (co[:n] > 0.5)
-        n_edge = int(edge_mask.sum())
-        print(
-            f"[viz] Edge mask (edge_strength>0.1 & coherence>0.5): "
-            f"{n_edge}/{len(points)} edge points"
-        )
+        return None, None
 
-    # Store original edge_mask and tangents for filtering (after they're defined)
-    original_edge_mask = edge_mask.copy() if edge_mask is not None else None
-    original_tangents = tangents.copy() if tangents is not None else None
+    edge_strength = np.asarray(features["edge_strength"], dtype=float).reshape(-1)
+    coherence = np.asarray(features["coherence"], dtype=float).reshape(-1)
+    n = min(n_points, len(edge_strength), len(coherence))
 
-    # ----- Draw tangents as Lines -----
-    def draw_edges():
-        """Draw edge tangent lines for points where pose_from_edge is True."""
-        nonlocal edge_lines, unscaled_edge_lines
+    edge_mask = np.zeros(n_points, dtype=bool)
+    edge_mask[:n] = (
+        (edge_strength[:n] > config.edge_strength_threshold)
+        & (coherence[:n] > config.coherence_threshold)
+    )
 
-        # Remove existing edge lines
-        if edge_lines:
-            plotter.remove(edge_lines)
-            edge_lines.clear()
-        if unscaled_edge_lines:
-            plotter.remove(unscaled_edge_lines)
-            unscaled_edge_lines.clear()
+    scale_factors = np.ones(n_points, dtype=float)
+    scaled = np.nan_to_num((coherence[:n] * edge_strength[:n]) / 4.0)
+    scale_factors[:n] = np.clip(scaled, 0.0, 1.0)
 
-        if tangents is None or edge_mask is None:
-            return
+    print(
+        "[viz] Edge mask "
+        f"(edge_strength>{config.edge_strength_threshold:g} & "
+        f"coherence>{config.coherence_threshold:g}): "
+        f"{int(edge_mask.sum())}/{n_points} edge points"
+    )
+    return edge_mask, scale_factors
 
-        points_arr = np.asarray(points, float)
-        tangents_arr = np.asarray(tangents, float)
 
-        # Align lengths defensively (some rows may be missing/extra)
-        n_points = points_arr.shape[0]
-        n_tangents = tangents_arr.shape[0]
-        n_mask = edge_mask.shape[0]
-        n_common = min(n_points, n_tangents, n_mask)
+def prepare_model_view(
+    model_data: dict,
+    config: VisualizationConfig | None = None,
+) -> PreparedModelView:
+    """Convert loaded model data into validated arrays for visualization."""
+    config = config or VisualizationConfig()
+    points = np.asarray(model_data["points"], dtype=float)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError(f"Expected points with shape (N, 3), got {points.shape}")
+    if len(points) == 0:
+        raise ValueError("Cannot visualize an empty point cloud")
 
-        if n_common == 0:
-            print("[viz] No common rows to draw tangents.")
-            return
+    features = {
+        key: _as_feature_array(value)
+        for key, value in model_data.get("features", {}).items()
+    }
 
-        P = points_arr[:n_common]
-        T = tangents_arr[:n_common]
-        EM = edge_mask[:n_common]
+    print(f"[viz] Available features: {list(features.keys())}")
+    print(f"[viz] Points shape: {points.shape}")
 
-        # Extract coherence and edge_strength if available
-        scale_factors = None
-        if "coherence" in features and "edge_strength" in features:
-            coherence_arr = np.asarray(features["coherence"], float).reshape(-1)
-            edge_strength_arr = np.asarray(features["edge_strength"], float).reshape(-1)
-            n_coherence = coherence_arr.shape[0]
-            n_edge_strength = edge_strength_arr.shape[0]
-            n_common_scale = min(n_common, n_coherence, n_edge_strength)
-            if n_common_scale > 0:
-                coherence_vals = coherence_arr[:n_common_scale]
-                edge_strength_vals = edge_strength_arr[:n_common_scale]
-                # Compute (coherence * edge_strength) / 4, which ranges from [0, 1]
-                # since coherence * edge_strength ranges from [0, 4]
-                scale_factors = (coherence_vals * edge_strength_vals) / 4.0
-                # Clamp to [0, 1] to ensure valid scaling
-                scale_factors = np.clip(scale_factors, 0.0, 1.0)
-                print(
-                    f"[viz] Using (coherence * edge_strength) / 4 to scale edge line lengths (range: [{scale_factors.min():.3f}, {scale_factors.max():.3f}])"
-                )
-            else:
-                print(
-                    "[viz] Warning: coherence/edge_strength found but have no valid values"
-                )
-        else:
-            if "coherence" not in features:
-                print(
-                    "[viz] No coherence feature found; using fixed scale for edge lines"
-                )
-            if "edge_strength" not in features:
-                print(
-                    "[viz] No edge_strength feature found; using fixed scale for edge lines"
-                )
+    colors = _compute_rgba_colors(features, len(points))
+    normals, tangents = _extract_pose_vectors(features)
+    edge_mask, edge_scale_factors = _compute_edge_mask(features, len(points), config)
 
-        # Print counts for debugging (only on first draw)
-        if len(edge_lines) == 0:
-            n_true = int(EM.sum())
-            n_false = int((~EM).sum())
-            print(
-                f"[viz] pose_from_edge: True={n_true}, False={n_false}, Total={n_common}"
-            )
-
-        # Normalize & validate
-        T = _normalize_rows(T)
-        valid = np.isfinite(T).all(axis=1) & (np.linalg.norm(T, axis=1) > 1e-9)
-
-        # Keep only edge-derived & valid
-        keep = EM & valid
-        idx = np.where(keep)[0]
-
-        # Build lines scaled by (coherence * edge_strength) / 4
-        new_lines = []
-        # Also build unscaled lines (using fixed scale of 1.0)
-        new_unscaled_lines = []
-        for i in idx:
-            p0 = P[i]
-            # Scale by (coherence * edge_strength) / 4 if available, otherwise use fixed scale
-            if scale_factors is not None and i < len(scale_factors):
-                scale_factor = scale_factors[i]
-            else:
-                scale_factor = 1.0
-            # Center the line around the point
-            # arrow_scale (0.002) is the maximum length
-            half_scale = (arrow_scale * scale_factor) / 2
-            p_start = p0 - half_scale * T[i]
-            p_end = p0 + half_scale * T[i]
-            new_lines.append(Line(p_start, p_end, c=tangent_color, lw=tangent_lw))
-
-            # Also draw unscaled edge (always using full arrow_scale) if enabled
-            if show_unscaled_edge_lines:
-                half_scale_unscaled = 0.002 / 2
-                p_start_unscaled = p0 - half_scale_unscaled * T[i]
-                p_end_unscaled = p0 + half_scale_unscaled * T[i]
-                # Use mid-red with transparency for unscaled edges
-                new_unscaled_lines.append(
-                    Line(
-                        p_start_unscaled,
-                        p_end_unscaled,
-                        c=(200, 0, 0),
-                        alpha=0.6,
-                        lw=tangent_lw - 1,
-                    )
-                )
-
-        if new_lines:
-            plotter.add(*new_lines)
-            edge_lines.extend(new_lines)
-        if new_unscaled_lines:
-            plotter.add(*new_unscaled_lines)
-            unscaled_edge_lines.extend(new_unscaled_lines)
-        if new_lines or new_unscaled_lines:
-            plotter.render()
-        else:
-            print("[viz] No tangents to draw after filtering (mask/validity).")
-
-    if tangents is not None and edge_mask is not None:
-        draw_edges()
-    else:
-        print(
-            "[viz] No pose_vectors/tangents or edge_strength/coherence found; skipping tangent rendering."
-        )
-
-    def draw_normals():
-        """Draw surface normal lines for all points (blue, fixed length)."""
-        nonlocal normal_lines
-
-        if normal_lines:
-            plotter.remove(normal_lines)
-            normal_lines.clear()
-
-        if normals is None:
-            return
-
-        pts = np.asarray(points, float)
-        N = _normalize_rows(np.asarray(normals, float))
-        n_common = min(len(pts), len(N))
-
-        valid = np.isfinite(N[:n_common]).all(axis=1) & (
-            np.linalg.norm(N[:n_common], axis=1) > 1e-9
-        )
-        idx = np.where(valid)[0]
-
-        half = arrow_scale / 2
-        new_lines = [
-            Line(pts[i] - half * N[i], pts[i] + half * N[i], c="blue", lw=2)
-            for i in idx
-        ]
-        if new_lines:
-            plotter.add(*new_lines)
-            normal_lines.extend(new_lines)
-            plotter.render()
-        else:
-            print("[viz] No valid normals to draw.")
-
-    def toggle_normals_callback(button, _event):
-        """Toggle surface normal lines on/off."""
-        nonlocal show_normals
-
-        show_normals = not show_normals
-        button.switch()
-        if show_normals:
-            draw_normals()
-        else:
-            if normal_lines:
-                plotter.remove(normal_lines)
-                normal_lines.clear()
-            plotter.render()
-
-    # ----- Add color mode toggle button -----
-    button_y_pos = 0.05
-    if available_color_modes:
-        print(
-            f"[viz] Creating color mode button with {len(mode_names)} states: {mode_names}"
-        )
-        plotter.add_button(
-            toggle_color_mode_callback,
-            pos=(0.85, button_y_pos),
-            states=mode_names,
-            size=20,
-            font="Calco",
-        )
-        print("[viz] Color mode button created successfully")
-    else:
-        print("[viz] No color modes available, skipping color mode button")
-
-    # ----- Add edge filter toggle button -----
-    if original_edge_mask is not None:
-        plotter.add_button(
-            toggle_edge_filter_callback,
-            pos=(0.85, button_y_pos + 0.08),
-            states=[" All Points ", " Edge Only "],
-            size=20,
-            font="Calco",
-        )
-
-    # ----- Add surface normal toggle button -----
-    if normals is not None:
-        plotter.add_button(
-            toggle_normals_callback,
-            pos=(0.85, button_y_pos + 0.16),
-            states=[" Normals Off ", " Normals On "],
-            size=20,
-            font="Calco",
-        )
-
-    # ----- Axes & camera -----
-    # Calculate camera position based on point cloud bounds
+    bounds_min = points.min(axis=0)
+    bounds_max = points.max(axis=0)
     center = points.mean(axis=0)
-    # Position camera at a distance proportional to the size of the point cloud
-    max_range = np.array(
-        [
-            points[:, 0].max() - points[:, 0].min(),
-            points[:, 1].max() - points[:, 1].min(),
-            points[:, 2].max() - points[:, 2].min(),
-        ]
-    ).max()
+    print("[viz] Point bounds:")
+    print(f"  X: [{bounds_min[0]:.3f}, {bounds_max[0]:.3f}]")
+    print(f"  Y: [{bounds_min[1]:.3f}, {bounds_max[1]:.3f}]")
+    print(f"  Z: [{bounds_min[2]:.3f}, {bounds_max[2]:.3f}]")
+    print(f"  Center: {center}")
+
+    return PreparedModelView(
+        points=points,
+        colors=colors,
+        normals=normals,
+        tangents=tangents,
+        edge_mask=edge_mask,
+        edge_scale_factors=edge_scale_factors,
+        bounds_min=bounds_min,
+        bounds_max=bounds_max,
+        center=center,
+    )
+
+
+def compute_camera(view: PreparedModelView) -> dict:
+    """Compute a camera looking down at the point cloud from +Z."""
+    ranges = view.bounds_max - view.bounds_min
+    max_range = max(float(ranges.max()), 1e-6)
     camera_distance = max_range * 1.5
-
-    # Position camera along +Z axis to look down at the XY-plane
     camera_pos = (
-        center[0],
-        center[1],
-        center[2] + camera_distance,
+        float(view.center[0]),
+        float(view.center[1]),
+        float(view.center[2] + camera_distance),
     )
-    plotter.show(
-        axes=dict(xtitle="X", ytitle="Y", ztitle="Z"),
-        viewup="y",
-        camera=dict(
-            pos=camera_pos,
-            focal_point=center,
-            view_angle=45,
-        ),
-        interactive=True,
+    return {
+        "pos": camera_pos,
+        "focal_point": view.center,
+        "view_angle": 45,
+    }
+
+
+class Layer:
+    """Base class for reusable Vedo actor layers."""
+
+    def __init__(self, visible: bool = True) -> None:
+        self.visible = visible
+        self.actors = []
+
+    def clear(self, plotter: Plotter) -> None:
+        """Remove all actors owned by this layer."""
+        if self.actors:
+            plotter.remove(self.actors)
+            self.actors.clear()
+
+    def redraw(
+        self,
+        plotter: Plotter,
+        view: PreparedModelView,
+        config: VisualizationConfig,
+        indices: np.ndarray,
+    ) -> None:
+        """Redraw this layer for active point indices."""
+        self.clear(plotter)
+        if not self.visible:
+            return
+        self.actors = self.build(view, config, indices)
+        if self.actors:
+            plotter.add(*self.actors)
+
+    def build(
+        self,
+        view: PreparedModelView,
+        config: VisualizationConfig,
+        indices: np.ndarray,
+    ) -> list:
+        """Build Vedo actors for this layer."""
+        raise NotImplementedError
+
+
+class PointCloudLayer(Layer):
+    """Point cloud layer colored by rgba feature values."""
+
+    def build(
+        self,
+        view: PreparedModelView,
+        config: VisualizationConfig,
+        indices: np.ndarray,
+    ) -> list:
+        from vedo import Points  # noqa: PLC0415
+
+        cloud = Points(view.points[indices], r=config.point_size)
+        cloud.pointcolors = view.colors[indices].tolist()
+        return [cloud]
+
+
+class VectorLineLayer(Layer):
+    """Line glyph layer for tangents or normals."""
+
+    def __init__(
+        self,
+        vector_name: str,
+        color,
+        line_width_getter: Callable[[VisualizationConfig], int],
+        scale_getter: Callable[[PreparedModelView, VisualizationConfig], np.ndarray],
+        mask_getter: Callable[[PreparedModelView], np.ndarray | None],
+        visible: bool = True,
+    ) -> None:
+        super().__init__(visible=visible)
+        self.vector_name = vector_name
+        self.color = color
+        self.line_width_getter = line_width_getter
+        self.scale_getter = scale_getter
+        self.mask_getter = mask_getter
+
+    def _vectors_for_view(self, view: PreparedModelView) -> np.ndarray | None:
+        if self.vector_name == "tangents":
+            return view.tangents
+        if self.vector_name == "normals":
+            return view.normals
+        raise ValueError(f"Unknown vector field: {self.vector_name}")
+
+    def build(
+        self,
+        view: PreparedModelView,
+        config: VisualizationConfig,
+        indices: np.ndarray,
+    ) -> list:
+        from vedo import Line  # noqa: PLC0415
+
+        vectors = self._vectors_for_view(view)
+        if vectors is None:
+            return []
+
+        n_common = min(len(view.points), len(vectors))
+        in_bounds = indices[indices < n_common]
+        if len(in_bounds) == 0:
+            return []
+
+        mask = self.mask_getter(view)
+        if mask is not None:
+            in_bounds = in_bounds[mask[in_bounds]]
+        if len(in_bounds) == 0:
+            return []
+
+        normalized = normalize_rows_safe(vectors[:n_common])
+        valid = np.isfinite(normalized[in_bounds]).all(axis=1) & (
+            np.linalg.norm(vectors[in_bounds], axis=1) > 1e-9
+        )
+        line_indices = in_bounds[valid]
+        if len(line_indices) == 0:
+            return []
+
+        scales = self.scale_getter(view, config)
+        line_width = self.line_width_getter(config)
+        lines = []
+        for idx in line_indices:
+            half = scales[idx] / 2.0
+            start = view.points[idx] - half * normalized[idx]
+            end = view.points[idx] + half * normalized[idx]
+            lines.append(Line(start, end, c=self.color, lw=line_width))
+        return lines
+
+
+class LearnedModelVisualizer:
+    """Interactive Vedo visualizer for prepared learned model data."""
+
+    def __init__(
+        self,
+        view: PreparedModelView,
+        config: VisualizationConfig,
+        title: str | None = None,
+    ) -> None:
+        from vedo import Plotter  # noqa: PLC0415
+
+        self.view = view
+        self.config = config
+        self.title = title or "Learned Point Cloud"
+        self.plotter = Plotter(size=config.window_size, title=self.title)
+        self.show_edge_only = False
+        self.layers = {
+            "points": PointCloudLayer(visible=True),
+            "scaled_edges": VectorLineLayer(
+                vector_name="tangents",
+                color="black",
+                line_width_getter=lambda cfg: cfg.tangent_line_width,
+                scale_getter=self._scaled_edge_lengths,
+                mask_getter=lambda view: view.edge_mask,
+                visible=config.show_scaled_edge_lines and view.has_edges,
+            ),
+            "unscaled_edges": VectorLineLayer(
+                vector_name="tangents",
+                color=(200, 0, 0),
+                line_width_getter=lambda cfg: max(1, cfg.tangent_line_width - 1),
+                scale_getter=self._unscaled_edge_lengths,
+                mask_getter=lambda view: view.edge_mask,
+                visible=config.show_unscaled_edge_lines and view.has_edges,
+            ),
+            "normals": VectorLineLayer(
+                vector_name="normals",
+                color="blue",
+                line_width_getter=lambda cfg: cfg.normal_line_width,
+                scale_getter=self._normal_lengths,
+                mask_getter=lambda _view: None,
+                visible=config.show_normals and view.has_normals,
+            ),
+        }
+
+    def _active_indices(self) -> np.ndarray:
+        if self.show_edge_only and self.view.edge_mask is not None:
+            edge_indices = np.where(self.view.edge_mask)[0]
+            if len(edge_indices) == 0:
+                print("[viz] Warning: no edge points found; showing all points.")
+                return np.arange(len(self.view.points))
+            return edge_indices
+        return np.arange(len(self.view.points))
+
+    def _scaled_edge_lengths(
+        self, view: PreparedModelView, config: VisualizationConfig
+    ) -> np.ndarray:
+        scales = np.ones(len(view.points), dtype=float)
+        if view.edge_scale_factors is not None:
+            scales = view.edge_scale_factors.copy()
+        return config.arrow_scale * scales
+
+    def _unscaled_edge_lengths(
+        self, view: PreparedModelView, config: VisualizationConfig
+    ) -> np.ndarray:
+        return np.full(len(view.points), config.unscaled_edge_scale, dtype=float)
+
+    def _normal_lengths(
+        self, view: PreparedModelView, config: VisualizationConfig
+    ) -> np.ndarray:
+        return np.full(len(view.points), config.arrow_scale, dtype=float)
+
+    def redraw(self) -> None:
+        """Redraw all registered layers."""
+        indices = self._active_indices()
+        for layer in self.layers.values():
+            layer.redraw(self.plotter, self.view, self.config, indices)
+        self.plotter.render()
+
+    def _toggle_edge_filter(self, button, _event) -> None:
+        self.show_edge_only = not self.show_edge_only
+        button.switch()
+        if self.show_edge_only:
+            n_edges = (
+                int(self.view.edge_mask.sum())
+                if self.view.edge_mask is not None
+                else 0
+            )
+            print(f"[viz] Showing {n_edges} edge points")
+        else:
+            print(f"[viz] Showing all {len(self.view.points)} points")
+        self.redraw()
+
+    def _toggle_layer(self, layer_name: str, button, _event) -> None:
+        layer = self.layers[layer_name]
+        layer.visible = not layer.visible
+        button.switch()
+        self.redraw()
+
+    def _control_specs(self) -> list[ControlSpec]:
+        return [
+            ControlSpec(
+                label_off=" All Points ",
+                label_on=" Edge Only ",
+                callback_name="_toggle_edge_filter",
+                enabled=lambda viz: viz.view.edge_mask is not None,
+                active=lambda viz: viz.show_edge_only,
+            ),
+            ControlSpec(
+                label_off=" Edges Off ",
+                label_on=" Edges On ",
+                callback_name="scaled_edges",
+                enabled=lambda viz: viz.view.has_edges,
+                active=lambda viz: viz.layers["scaled_edges"].visible,
+            ),
+            ControlSpec(
+                label_off=" Ref Edges Off ",
+                label_on=" Ref Edges On ",
+                callback_name="unscaled_edges",
+                enabled=lambda viz: viz.view.has_edges,
+                active=lambda viz: viz.layers["unscaled_edges"].visible,
+            ),
+            ControlSpec(
+                label_off=" Normals Off ",
+                label_on=" Normals On ",
+                callback_name="normals",
+                enabled=lambda viz: viz.view.has_normals,
+                active=lambda viz: viz.layers["normals"].visible,
+            ),
+        ]
+
+    def add_controls(self) -> None:
+        """Create all enabled buttons from the declarative control registry."""
+        x, y = DEFAULT_BUTTON_POS
+        button_index = 0
+        for spec in self._control_specs():
+            if not spec.enabled(self):
+                continue
+
+            pos = (x, y + button_index * BUTTON_Y_SPACING)
+            states = (
+                [spec.label_on, spec.label_off]
+                if spec.active(self)
+                else [spec.label_off, spec.label_on]
+            )
+            if spec.callback_name == "_toggle_edge_filter":
+                callback = self._toggle_edge_filter
+            else:
+                def callback(button, event, layer_name=spec.callback_name):
+                    self._toggle_layer(layer_name, button, event)
+
+            self.plotter.add_button(
+                callback,
+                pos=pos,
+                states=states,
+                size=20,
+                font="Calco",
+            )
+            button_index += 1
+
+    def show(self) -> None:
+        """Render the visualizer and enter Vedo's interactive loop."""
+        self.redraw()
+        self.add_controls()
+        self.plotter.show(
+            axes=dict(xtitle="X", ytitle="Y", ztitle="Z"),
+            viewup="y",
+            camera=compute_camera(self.view),
+            interactive=True,
+        )
+
+
+def visualize_point_cloud_interactive(
+    model_data: dict,
+    title: str | None = None,
+    arrow_scale: float = DEFAULT_ARROW_SCALE,
+    *,
+    show_unscaled_edge_lines: bool = True,
+    edge_strength_threshold: float = DEFAULT_EDGE_STRENGTH_THRESHOLD,
+    coherence_threshold: float = DEFAULT_COHERENCE_THRESHOLD,
+) -> None:
+    """Create interactive 3D visualization with Vedo."""
+    config = VisualizationConfig(
+        arrow_scale=arrow_scale,
+        show_unscaled_edge_lines=show_unscaled_edge_lines,
+        edge_strength_threshold=edge_strength_threshold,
+        coherence_threshold=coherence_threshold,
     )
+    view = prepare_model_view(model_data, config)
+    LearnedModelVisualizer(view, config, title=title).show()
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Visualize learned 2D sensor models.")
-    parser.add_argument("--lm", type=int, default=0, help="Learning module index")
-    args = parser.parse_args()
-
-    pretrained_model_path = Path(
-        "/Users/hlee/tbp/results/monty/pretrained_models/2d_sensor/"
-        "diskcylinder_learning_2d_30x_5sigma_new/pretrained/model.pt"
-    ).expanduser()
-
-    print("Loading model...")
-    state_dict = torch.load(pretrained_model_path, map_location="cpu")
-
-    lm_id = args.lm
+def _load_available_objects(model_path: Path, lm_id: int) -> list[str]:
+    """Load checkpoint metadata and return graph-memory object names."""
+    state_dict = torch.load(model_path, map_location="cpu")
     graph_memory = state_dict["lm_dict"][lm_id]["graph_memory"]
-    available_objects = list(graph_memory.keys())
+    return list(graph_memory.keys())
+
+
+def _select_objects(
+    available_objects: list[str], requested_objects: list[str] | None
+) -> list[str]:
+    """Validate and return requested object names."""
+    if requested_objects is None:
+        return available_objects
+
+    missing = [name for name in requested_objects if name not in available_objects]
+    if missing:
+        raise ValueError(
+            f"Requested objects not found: {missing}. "
+            f"Available objects: {available_objects}"
+        )
+    return requested_objects
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Visualize learned 2D sensor models.",
+        epilog=(
+            "Examples:\n"
+            "  conda activate tbp.monty\n"
+            '  export PYTHONPATH="$(pwd)/src"\n'
+            "  python sandbox/visualize_learned_model.py --model-path "
+            "path/to/model.pt\n"
+            "  python sandbox/visualize_learned_model.py --model-path "
+            "path/to/model.pt --objects disk cylinder\n"
+            "  python sandbox/visualize_learned_model.py --model-path "
+            "path/to/model.pt --hide-unscaled-edge-lines"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--model-path",
+        type=Path,
+        required=True,
+        help="Path to the pretrained model.pt checkpoint.",
+    )
+    parser.add_argument("--lm", type=int, default=0, help="Learning module index.")
+    parser.add_argument(
+        "--objects",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Object names to visualize. Defaults to all objects in graph memory.",
+    )
+    parser.add_argument(
+        "--edge-strength-threshold",
+        type=float,
+        default=DEFAULT_EDGE_STRENGTH_THRESHOLD,
+        help=(
+            "Minimum edge_strength for edge overlays "
+            f"(default: {DEFAULT_EDGE_STRENGTH_THRESHOLD})."
+        ),
+    )
+    parser.add_argument(
+        "--coherence-threshold",
+        type=float,
+        default=DEFAULT_COHERENCE_THRESHOLD,
+        help=(
+            "Minimum coherence for edge overlays "
+            f"(default: {DEFAULT_COHERENCE_THRESHOLD})."
+        ),
+    )
+    parser.add_argument(
+        "--arrow-scale",
+        type=float,
+        default=DEFAULT_ARROW_SCALE,
+        help=f"Maximum scaled vector length (default: {DEFAULT_ARROW_SCALE}).",
+    )
+    parser.add_argument(
+        "--hide-unscaled-edge-lines",
+        action="store_true",
+        help="Hide red fixed-length reference edge tangent lines at startup.",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    """Load selected object models and visualize them one at a time."""
+    args = parse_args()
+    model_path = args.model_path.expanduser()
+    config = VisualizationConfig(
+        edge_strength_threshold=args.edge_strength_threshold,
+        coherence_threshold=args.coherence_threshold,
+        arrow_scale=args.arrow_scale,
+        show_unscaled_edge_lines=not args.hide_unscaled_edge_lines,
+    )
+
+    print("Loading model metadata...")
+    available_objects = _load_available_objects(model_path, args.lm)
     print(f"\nAvailable objects: {available_objects}")
 
-    for object_name in available_objects:
+    try:
+        selected_objects = _select_objects(available_objects, args.objects)
+    except ValueError as e:
+        raise SystemExit(str(e)) from e
+
+    for object_name in selected_objects:
         print(f"\nProcessing {object_name}...")
-
         try:
-            model_data = load_object_model(
-                pretrained_model_path, object_name, lm_id=lm_id
-            )
-
+            model_data = load_object_model(model_path, object_name, lm_id=args.lm)
             print(f"  Points shape: {model_data['points'].shape}")
             print(f"  Available features: {list(model_data['features'].keys())}")
 
-            visualize_point_cloud_interactive(
-                model_data,
+            view = prepare_model_view(model_data, config)
+            visualizer = LearnedModelVisualizer(
+                view,
+                config,
                 title=f"Learned Point Cloud: {object_name}",
             )
-
-        except Exception as e:
+            visualizer.show()
+        except Exception as e:  # noqa: BLE001
             print(f"  Error processing {object_name}: {e}")
-            import traceback
-
             traceback.print_exc()
             continue
+
+
+if __name__ == "__main__":
+    main()
