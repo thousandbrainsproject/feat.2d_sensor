@@ -1,0 +1,9 @@
+index,filename,name,description,edge_strength,coherence,angle_degrees,has_edge,is_geometric_edge
+1,01_uniform_gray.png,uniform_gray,Uniform gray patch with no oriented edge evidence.,0.000000,0.000000,,False,False
+2,02_weak_coherent_line.png,weak_coherent_line,"Low-contrast centered line: low strength, high coherence.",0.255401,1.000000,90.0,True,False
+3,03_strong_coherent_line.png,strong_coherent_line,"Sharp centered white line: high strength, high coherence.",1.466155,1.000000,90.0,True,False
+4,04_blurred_coherent_line.png,blurred_coherent_line,"Blurred white line: reduced strength, high coherence.",0.477419,1.000000,90.0,True,False
+5,05_dominant_plus_weak_cross.png,dominant_plus_weak_cross,Strong line with a weak crossing line: dominant orientation remains.,1.306060,0.897115,90.0,True,False
+6,06_equal_cross.png,equal_cross,Equal-strength cross: strong gradients but low orientation coherence.,1.024179,0.000167,45.7,False,False
+7,07_diagonal_line.png,diagonal_line,Clean diagonal line: orientation changes while quality remains high.,1.464254,1.000000,45.0,True,False
+8,08_noisy_line.png,noisy_line,Centered line with deterministic image noise.,1.213021,0.856802,90.9,True,False
