@@ -138,6 +138,16 @@ A clean straight edge has one large eigenvalue and one small eigenvalue; a corne
 \]
 Note that coherence has a range of $[0, 1]$ and values closer to 1 indicate presence of a clear edge. In Monty, only edges whose $\text{coherence} > 0.5$ is considered to be a true detected edge by default, though this can be adjusted by setting the \texttt{coherence\_threshold} for \texttt{EdgeDetector} in configurations.
 
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.82\textwidth]{../figures/edge_coherence_examples/edge_coherence_contact_sheet.png}
+  \caption{Synthetic 64x64 texture patches illustrating how \texttt{EdgeDetector}
+  coherence decreases when a clean vertical line competes with perpendicular
+  gradient evidence. Yellow arrows are drawn after scoring to show the detected
+  edge angle without affecting the reported values.}
+  \label{fig:edge-coherence-examples}
+\end{figure}
+
 Next, edge strength is defined as $\sqrt{\lambda_{\max}}$, and indicates the dominant gradient magnitude scale of the patch~\cite{khan_corner_detection,opencv_gst}. The example patches below show three ways the same 90-degree white line can produce lower edge-strength values: reduced contrast, increased blur, and movement away from the center-weighted detector support.
 
 \begin{figure}[h]

@@ -1,0 +1,10 @@
+index,filename,row,name,label,horizontal_gray,horizontal_thickness,horizontal_y,edge_strength,coherence,angle_degrees,has_edge,is_geometric_edge
+1,01_color_none.png,horizontal_color,color_none,color: 0,0,2,32,2.942331,1.000000,90.0,True,False
+2,02_color_mid.png,horizontal_color,color_mid,color: 128,128,2,32,2.528748,0.845838,90.0,True,False
+3,03_color_white.png,horizontal_color,color_white,color: 255,255,2,32,2.055175,0.000009,135.0,False,False
+4,04_thickness_thin.png,horizontal_thickness,thickness_thin,thickness: 1,255,1,32,2.397032,0.485060,90.0,False,False
+5,05_thickness_medium.png,horizontal_thickness,thickness_medium,thickness: 8,255,8,32,2.190739,0.160490,180.0,False,False
+6,06_thickness_thick.png,horizontal_thickness,thickness_thick,thickness: 24,255,24,32,2.584103,0.712608,180.0,True,False
+7,07_offset_far.png,horizontal_offset,offset_far,offset: y 16,255,2,16,2.936289,0.994012,90.0,True,False
+8,08_offset_near.png,horizontal_offset,offset_near,offset: y 24,255,2,24,2.441207,0.400561,90.0,False,False
+9,09_offset_center.png,horizontal_offset,offset_center,offset: y 32,255,2,32,2.055175,0.000009,135.0,False,False
