@@ -21,7 +21,7 @@ experiment:
     max_total_steps: 6000
     n_train_epochs: 3
     n_eval_epochs: 20
-    model_name_or_path: ${path.expanduser:${oc.env:MONTY_MODELS}/2d_sensor/disk_learning_control/pretrained/}
+    model_name_or_path: ${path.expanduser:${oc.env:MONTY_MODELS}/2d_sensor/disk_v0_3d/pretrained/}
     min_lms_match: 1
     seed: 42
     supervised_lm_ids: all
@@ -58,7 +58,3 @@ experiment:
             min_post_goal_success_steps: 5
             x_percent_scale_factor: 0.75
             desired_object_distance: 0.03
-      motor_system_config:
-        motor_system_args:
-          policy:
-            fixed_amount: 1
