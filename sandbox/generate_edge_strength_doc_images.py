@@ -174,7 +174,11 @@ def sensor_observation(image: np.ndarray) -> SensorObservation:
     )
 
 
-def annotate_detected_angle(image: np.ndarray, angle_rad: float | None) -> np.ndarray:
+def annotate_detected_angle(
+    image: np.ndarray,
+    angle_rad: float | None,
+    x_position: int,
+) -> np.ndarray:
     """Overlay the detected edge angle as a display-only arrow.
 
     Returns:
@@ -185,8 +189,8 @@ def annotate_detected_angle(image: np.ndarray, angle_rad: float | None) -> np.nd
     if angle_rad is None:
         return annotated
 
-    center = np.array([13.0, 47.0])
-    length = 22.0
+    center = np.array([float(x_position), IMAGE_SIZE / 2.0])
+    length = 16.0
     direction = np.array([np.cos(angle_rad), np.sin(angle_rad)])
     start = center - 0.5 * length * direction
     end = center + 0.5 * length * direction
@@ -238,7 +242,11 @@ def generate_examples(output_dir: Path) -> list[ScoredStrengthCase]:
     for index, case in enumerate(CASES, start=1):
         raw_image = render_raw_patch(case)
         edge = detector(sensor_observation(raw_image))
-        annotated_image = annotate_detected_angle(raw_image, edge.angle)
+        annotated_image = annotate_detected_angle(
+            raw_image,
+            edge.angle,
+            case.x_position,
+        )
         filename = f"{index:02d}_{case.name}.png"
         save_rgb_png(output_dir / filename, annotated_image)
         examples.append(
