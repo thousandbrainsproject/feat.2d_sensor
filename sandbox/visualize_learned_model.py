@@ -39,14 +39,14 @@ if TYPE_CHECKING:
 
 DEFAULT_EDGE_STRENGTH_THRESHOLD = 0.1
 DEFAULT_COHERENCE_THRESHOLD = 0.5
-DEFAULT_ARROW_SCALE = 0.01
 DEFAULT_UNSCALED_EDGE_SCALE = 0.002
 DEFAULT_POINT_SIZE = 10
-DEFAULT_TANGENT_LINE_WIDTH = 3
+DEFAULT_TANGENT_LINE_WIDTH = 5
 DEFAULT_NORMAL_LINE_WIDTH = 2
+DEFAULT_NORMAL_SCALE = 0.01
 DEFAULT_WINDOW_SIZE = (1400, 1000)
-DEFAULT_BUTTON_POS = (0.85, 0.05)
-BUTTON_Y_SPACING = 0.08
+DEFAULT_BUTTON_POS = (0.55, 0.05)
+BUTTON_X_SPACING = 0.13
 FALLBACK_POINT_COLOR = np.array([128, 128, 128], dtype=np.uint8)
 
 
@@ -56,13 +56,11 @@ class VisualizationConfig:
 
     edge_strength_threshold: float = DEFAULT_EDGE_STRENGTH_THRESHOLD
     coherence_threshold: float = DEFAULT_COHERENCE_THRESHOLD
-    arrow_scale: float = DEFAULT_ARROW_SCALE
     unscaled_edge_scale: float = DEFAULT_UNSCALED_EDGE_SCALE
     point_size: int = DEFAULT_POINT_SIZE
     tangent_line_width: int = DEFAULT_TANGENT_LINE_WIDTH
     normal_line_width: int = DEFAULT_NORMAL_LINE_WIDTH
-    show_scaled_edge_lines: bool = True
-    show_unscaled_edge_lines: bool = True
+    normal_scale: float = DEFAULT_NORMAL_SCALE
     show_normals: bool = False
     window_size: tuple[int, int] = DEFAULT_WINDOW_SIZE
 
@@ -76,7 +74,6 @@ class PreparedModelView:
     normals: np.ndarray | None
     tangents: np.ndarray | None
     edge_mask: np.ndarray | None
-    edge_scale_factors: np.ndarray | None
     bounds_min: np.ndarray
     bounds_max: np.ndarray
     center: np.ndarray
@@ -165,28 +162,23 @@ def _compute_edge_mask(
     features: dict,
     n_points: int,
     config: VisualizationConfig,
-) -> tuple[np.ndarray | None, np.ndarray | None]:
-    """Compute edge mask and tangent scale factors from edge features."""
+) -> np.ndarray | None:
+    """Compute edge mask from edge features."""
     if "edge_strength" not in features or "coherence" not in features:
         print(
             "[viz] Warning: edge_strength/coherence not found in features. "
             "Edge overlays and edge-only filtering will be unavailable."
         )
-        return None, None
+        return None
 
     edge_strength = np.asarray(features["edge_strength"], dtype=float).reshape(-1)
     coherence = np.asarray(features["coherence"], dtype=float).reshape(-1)
     n = min(n_points, len(edge_strength), len(coherence))
 
     edge_mask = np.zeros(n_points, dtype=bool)
-    edge_mask[:n] = (
-        (edge_strength[:n] > config.edge_strength_threshold)
-        & (coherence[:n] > config.coherence_threshold)
+    edge_mask[:n] = (edge_strength[:n] > config.edge_strength_threshold) & (
+        coherence[:n] > config.coherence_threshold
     )
-
-    scale_factors = np.ones(n_points, dtype=float)
-    scaled = np.nan_to_num((coherence[:n] * edge_strength[:n]) / 4.0)
-    scale_factors[:n] = np.clip(scaled, 0.0, 1.0)
 
     print(
         "[viz] Edge mask "
@@ -194,7 +186,7 @@ def _compute_edge_mask(
         f"coherence>{config.coherence_threshold:g}): "
         f"{int(edge_mask.sum())}/{n_points} edge points"
     )
-    return edge_mask, scale_factors
+    return edge_mask
 
 
 def prepare_model_view(
@@ -219,7 +211,7 @@ def prepare_model_view(
 
     colors = _compute_rgba_colors(features, len(points))
     normals, tangents = _extract_pose_vectors(features)
-    edge_mask, edge_scale_factors = _compute_edge_mask(features, len(points), config)
+    edge_mask = _compute_edge_mask(features, len(points), config)
 
     bounds_min = points.min(axis=0)
     bounds_max = points.max(axis=0)
@@ -236,7 +228,6 @@ def prepare_model_view(
         normals=normals,
         tangents=tangents,
         edge_mask=edge_mask,
-        edge_scale_factors=edge_scale_factors,
         bounds_min=bounds_min,
         bounds_max=bounds_max,
         center=center,
@@ -397,24 +388,17 @@ class LearnedModelVisualizer:
         self.config = config
         self.title = title or "Learned Point Cloud"
         self.plotter = Plotter(size=config.window_size, title=self.title)
+        self.initial_camera = compute_camera(self.view)
         self.show_edge_only = False
         self.layers = {
             "points": PointCloudLayer(visible=True),
-            "scaled_edges": VectorLineLayer(
-                vector_name="tangents",
-                color="black",
-                line_width_getter=lambda cfg: cfg.tangent_line_width,
-                scale_getter=self._scaled_edge_lengths,
-                mask_getter=lambda view: view.edge_mask,
-                visible=config.show_scaled_edge_lines and view.has_edges,
-            ),
             "unscaled_edges": VectorLineLayer(
                 vector_name="tangents",
                 color=(200, 0, 0),
-                line_width_getter=lambda cfg: max(1, cfg.tangent_line_width - 1),
+                line_width_getter=lambda cfg: cfg.tangent_line_width,
                 scale_getter=self._unscaled_edge_lengths,
                 mask_getter=lambda view: view.edge_mask,
-                visible=config.show_unscaled_edge_lines and view.has_edges,
+                visible=view.has_edges,
             ),
             "normals": VectorLineLayer(
                 vector_name="normals",
@@ -435,14 +419,6 @@ class LearnedModelVisualizer:
             return edge_indices
         return np.arange(len(self.view.points))
 
-    def _scaled_edge_lengths(
-        self, view: PreparedModelView, config: VisualizationConfig
-    ) -> np.ndarray:
-        scales = np.ones(len(view.points), dtype=float)
-        if view.edge_scale_factors is not None:
-            scales = view.edge_scale_factors.copy()
-        return config.arrow_scale * scales
-
     def _unscaled_edge_lengths(
         self, view: PreparedModelView, config: VisualizationConfig
     ) -> np.ndarray:
@@ -451,7 +427,7 @@ class LearnedModelVisualizer:
     def _normal_lengths(
         self, view: PreparedModelView, config: VisualizationConfig
     ) -> np.ndarray:
-        return np.full(len(view.points), config.arrow_scale, dtype=float)
+        return np.full(len(view.points), config.normal_scale, dtype=float)
 
     def redraw(self) -> None:
         """Redraw all registered layers."""
@@ -465,9 +441,7 @@ class LearnedModelVisualizer:
         button.switch()
         if self.show_edge_only:
             n_edges = (
-                int(self.view.edge_mask.sum())
-                if self.view.edge_mask is not None
-                else 0
+                int(self.view.edge_mask.sum()) if self.view.edge_mask is not None else 0
             )
             print(f"[viz] Showing {n_edges} edge points")
         else:
@@ -479,6 +453,21 @@ class LearnedModelVisualizer:
         layer.visible = not layer.visible
         button.switch()
         self.redraw()
+
+    def _reset_camera(self, _button=None, _event=None) -> None:
+        """Restore the initial screenshot-friendly camera view."""
+        camera = getattr(self.plotter, "camera", None)
+        if camera is not None:
+            camera.SetPosition(*self.initial_camera["pos"])
+            camera.SetFocalPoint(*self.initial_camera["focal_point"])
+            camera.SetViewUp(0, 1, 0)
+            camera.SetViewAngle(self.initial_camera["view_angle"])
+            reset_clipping = getattr(self.plotter, "reset_camera_clipping_range", None)
+            if reset_clipping is not None:
+                reset_clipping()
+            elif getattr(self.plotter, "renderer", None) is not None:
+                self.plotter.renderer.ResetCameraClippingRange()
+        self.plotter.render()
 
     def _control_specs(self) -> list[ControlSpec]:
         return [
@@ -492,13 +481,6 @@ class LearnedModelVisualizer:
             ControlSpec(
                 label_off=" Edges Off ",
                 label_on=" Edges On ",
-                callback_name="scaled_edges",
-                enabled=lambda viz: viz.view.has_edges,
-                active=lambda viz: viz.layers["scaled_edges"].visible,
-            ),
-            ControlSpec(
-                label_off=" Ref Edges Off ",
-                label_on=" Ref Edges On ",
                 callback_name="unscaled_edges",
                 enabled=lambda viz: viz.view.has_edges,
                 active=lambda viz: viz.layers["unscaled_edges"].visible,
@@ -510,17 +492,28 @@ class LearnedModelVisualizer:
                 enabled=lambda viz: viz.view.has_normals,
                 active=lambda viz: viz.layers["normals"].visible,
             ),
+            ControlSpec(
+                label_off=" Reset Camera ",
+                label_on=" Reset Camera ",
+                callback_name="_reset_camera",
+                enabled=lambda _viz: True,
+                active=lambda _viz: False,
+            ),
         ]
+
+    def _control_position(self, button_index: int) -> tuple[float, float]:
+        """Return the normalized position for a horizontal control row."""
+        x, y = DEFAULT_BUTTON_POS
+        return x + button_index * BUTTON_X_SPACING, y
 
     def add_controls(self) -> None:
         """Create all enabled buttons from the declarative control registry."""
-        x, y = DEFAULT_BUTTON_POS
         button_index = 0
         for spec in self._control_specs():
             if not spec.enabled(self):
                 continue
 
-            pos = (x, y + button_index * BUTTON_Y_SPACING)
+            pos = self._control_position(button_index)
             states = (
                 [spec.label_on, spec.label_off]
                 if spec.active(self)
@@ -528,7 +521,10 @@ class LearnedModelVisualizer:
             )
             if spec.callback_name == "_toggle_edge_filter":
                 callback = self._toggle_edge_filter
+            elif spec.callback_name == "_reset_camera":
+                callback = self._reset_camera
             else:
+
                 def callback(button, event, layer_name=spec.callback_name):
                     self._toggle_layer(layer_name, button, event)
 
@@ -548,7 +544,7 @@ class LearnedModelVisualizer:
         self.plotter.show(
             axes=dict(xtitle="X", ytitle="Y", ztitle="Z"),
             viewup="y",
-            camera=compute_camera(self.view),
+            camera=self.initial_camera,
             interactive=True,
         )
 
@@ -556,19 +552,9 @@ class LearnedModelVisualizer:
 def visualize_point_cloud_interactive(
     model_data: dict,
     title: str | None = None,
-    arrow_scale: float = DEFAULT_ARROW_SCALE,
-    *,
-    show_unscaled_edge_lines: bool = True,
-    edge_strength_threshold: float = DEFAULT_EDGE_STRENGTH_THRESHOLD,
-    coherence_threshold: float = DEFAULT_COHERENCE_THRESHOLD,
 ) -> None:
     """Create interactive 3D visualization with Vedo."""
-    config = VisualizationConfig(
-        arrow_scale=arrow_scale,
-        show_unscaled_edge_lines=show_unscaled_edge_lines,
-        edge_strength_threshold=edge_strength_threshold,
-        coherence_threshold=coherence_threshold,
-    )
+    config = VisualizationConfig()
     view = prepare_model_view(model_data, config)
     LearnedModelVisualizer(view, config, title=title).show()
 
@@ -607,9 +593,7 @@ def parse_args() -> argparse.Namespace:
             "  python sandbox/visualize_learned_model.py --model-path "
             "path/to/model.pt\n"
             "  python sandbox/visualize_learned_model.py --model-path "
-            "path/to/model.pt --objects disk cylinder\n"
-            "  python sandbox/visualize_learned_model.py --model-path "
-            "path/to/model.pt --hide-unscaled-edge-lines"
+            "path/to/model.pt --objects disk cylinder"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -627,35 +611,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Object names to visualize. Defaults to all objects in graph memory.",
     )
-    parser.add_argument(
-        "--edge-strength-threshold",
-        type=float,
-        default=DEFAULT_EDGE_STRENGTH_THRESHOLD,
-        help=(
-            "Minimum edge_strength for edge overlays "
-            f"(default: {DEFAULT_EDGE_STRENGTH_THRESHOLD})."
-        ),
-    )
-    parser.add_argument(
-        "--coherence-threshold",
-        type=float,
-        default=DEFAULT_COHERENCE_THRESHOLD,
-        help=(
-            "Minimum coherence for edge overlays "
-            f"(default: {DEFAULT_COHERENCE_THRESHOLD})."
-        ),
-    )
-    parser.add_argument(
-        "--arrow-scale",
-        type=float,
-        default=DEFAULT_ARROW_SCALE,
-        help=f"Maximum scaled vector length (default: {DEFAULT_ARROW_SCALE}).",
-    )
-    parser.add_argument(
-        "--hide-unscaled-edge-lines",
-        action="store_true",
-        help="Hide red fixed-length reference edge tangent lines at startup.",
-    )
     return parser.parse_args()
 
 
@@ -663,12 +618,7 @@ def main() -> None:
     """Load selected object models and visualize them one at a time."""
     args = parse_args()
     model_path = args.model_path.expanduser()
-    config = VisualizationConfig(
-        edge_strength_threshold=args.edge_strength_threshold,
-        coherence_threshold=args.coherence_threshold,
-        arrow_scale=args.arrow_scale,
-        show_unscaled_edge_lines=not args.hide_unscaled_edge_lines,
-    )
+    config = VisualizationConfig()
 
     print("Loading model metadata...")
     available_objects = _load_available_objects(model_path, args.lm)
