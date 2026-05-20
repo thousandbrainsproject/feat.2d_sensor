@@ -19,6 +19,7 @@ sensor_module_0:
     - pose_vectors
     - pose_fully_defined
     - principal_curvatures
+    - principal_curvatures_log
     - on_object
     - object_coverage
     - rgba
@@ -47,6 +48,7 @@ sensor_module_1:
     - pose_vectors
     - pose_fully_defined
     - principal_curvatures
+    - principal_curvatures_log
     - on_object
     - object_coverage
     - rgba
