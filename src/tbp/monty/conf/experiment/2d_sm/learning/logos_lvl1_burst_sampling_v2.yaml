@@ -1,0 +1,12 @@
+# @package _global_
+
+defaults:
+  - /experiment/supervised_pre_training_objects_with_logos_lvl1_comp_models_burst_sampling
+
+experiment:
+  config:
+    n_train_epochs: 14
+    model_name_or_path: ${path.expanduser:${oc.env:MONTY_MODELS}/pretrained_ycb_v12/supervised_pre_training_logos_after_flat_objects/pretrained/}
+    logging:
+      output_dir: ${path.expanduser:${oc.env:MONTY_MODELS}/my_trained_models}
+      python_log_level: INFO
