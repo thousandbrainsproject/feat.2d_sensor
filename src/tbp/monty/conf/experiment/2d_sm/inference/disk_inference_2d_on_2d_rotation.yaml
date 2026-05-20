@@ -1,0 +1,16 @@
+# @package _global_
+
+defaults:
+  - /experiment/2d_sm/inference/disk_inference_2d_on_2d
+
+constants:
+  rotation: [[0, 0, 30]]
+  run_name: disk_inference_2d_${constants.rotation[0][2]}deg
+
+experiment:
+  config:
+    logging:
+      run_name: ${constants.run_name}
+    eval_env_interface_args:
+      object_init_sampler:
+        rotations: ${constants.rotation}

@@ -1,0 +1,35 @@
+# @package experiment.config
+
+do_train: false
+do_eval: true
+eval_env_interface_args:
+  parent_to_child_mapping: null
+  object_names:
+    - 007_disk_tbp_horz
+    - 009_disk_numenta_horz
+  object_init_sampler:
+    _target_: tbp.monty.frameworks.environments.object_init_samplers.Predefined
+    positions:
+      # 20 Gaussian-jittered positions (sigma_x=0.015, sigma_y=0.006)
+      - [0.004571, 1.49376, 0.000000]
+      - [0.011257, 1.505643, 0.000000]
+      - [-0.029266, 1.492187, 0.000000]
+      - [0.001918, 1.498103, 0.000000]
+      - [-0.000252, 1.494882, 0.000000]
+      - [0.013191, 1.504667, 0.000000]
+      - [0.00099, 1.506763, 0.000000]
+      - [0.007013, 1.494844, 0.000000]
+      - [0.005531, 1.494247, 0.000000]
+      - [0.013177, 1.4997, 0.000000]
+      - [-0.002773, 1.495914, 0.000000]
+      - [0.018338, 1.499073, 0.000000]
+      - [-0.006425, 1.497887, 0.000000]
+      - [0.007985, 1.502193, 0.000000]
+      - [0.006191, 1.502585, 0.000000]
+      - [0.032125, 1.497562, 0.000000]
+      - [-0.007684, 1.495117, 0.000000]
+      - [0.00924, 1.506774, 0.000000]
+      - [-0.001709, 1.494959, 0.000000]
+      - [-0.012367, 1.503904, 0.000000]
+    rotations: [[0.0, 0.0, 0.0]]
+eval_env_interface_class: ${monty.class:tbp.monty.experiment.environment.OneObjectPerEpisodeInterface}

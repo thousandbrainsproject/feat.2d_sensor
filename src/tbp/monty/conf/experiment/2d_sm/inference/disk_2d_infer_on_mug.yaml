@@ -1,0 +1,22 @@
+# @package _global_
+
+defaults:
+  - /experiment/2d_sm/inference/disk_inference_2d_on_2d
+
+experiment:
+  config:
+    logging:
+      run_name: disk_2d_infer_on_mug_20pos_30x_5sigma_burst_sampling
+    monty_config:
+      learning_modules:
+        learning_module_0:
+          hypotheses_updater_args:
+            deletion_trigger_slope: 0.0
+            burst_trigger_slope: 0.7
+            include_telemetry: true
+          evidence_threshold_config: all
+          object_evidence_threshold: 10
+    eval_env_interface_args:
+      object_names:
+        - 024_mug_tbp_horz
+        - 026_mug_numenta_horz
