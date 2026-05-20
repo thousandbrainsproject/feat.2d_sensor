@@ -191,13 +191,21 @@ class TwoDSensorModule(SensorModule):
 
         observed_state = self._observation_processor.process(observation)
 
-        curvature_pose_vectors = observed_state.get_pose_vectors().copy()
-        true_surface_normal = observed_state.get_surface_normal().copy()
+        if "pose_vectors" in observed_state.morphological_features:
+            curvature_pose_vectors = observed_state.get_pose_vectors().copy()
+            true_surface_normal = observed_state.get_surface_normal().copy()
+        else:
+            curvature_pose_vectors = None
+            true_surface_normal = None
 
         # Only edges define pose for 2D sensor; reset curvature-based flag.
         observed_state.morphological_features["pose_fully_defined"] = False
 
-        if observed_state.use_state and observed_state.get_on_object():
+        if (
+            observed_state.use_state
+            and observed_state.get_on_object()
+            and true_surface_normal is not None
+        ):
             self._update_tangent_frame(true_surface_normal)
             if self._extract_edges:
                 observed_state = self._extract_2d_edge(
@@ -205,6 +213,15 @@ class TwoDSensorModule(SensorModule):
                     observation,
                     true_surface_normal,
                 )
+
+        # Replace 3D curvature pose with flat 2D basis when no edge was detected
+        if (
+            "pose_vectors" in observed_state.morphological_features
+            and observed_state.get_feature_by_name("pose_fully_defined") is False
+        ):
+            observed_state.morphological_features["pose_vectors"] = np.array(
+                [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+            )
 
         if observed_state.use_state:
             observed_state = self._message_noise(observed_state, rng=ctx.rng)

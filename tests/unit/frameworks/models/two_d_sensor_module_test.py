@@ -56,7 +56,7 @@ def make_message(
     if pose_vectors is None:
         pose_vectors = np.identity(3)
     if principal_curvatures is None:
-        principal_curvatures = np.identity(3)
+        principal_curvatures = np.zeros(2)
 
     morphological_features = {
         "pose_vectors": pose_vectors,
@@ -237,6 +237,68 @@ class TwoDSensorModuleEdgeTest(unittest.TestCase):
 
         assert msg.sender_id == "test"
         assert msg.sender_type == "SM"
+
+    def test_step_handles_off_object_percept_without_pose_vectors(self):
+        two_d_sm = make_2d_sm(edge_detector=Mock(return_value=make_no_edge()))
+        percept = Message(
+            location=np.array([1.0, 2.0, 3.0]),
+            morphological_features={"on_object": 0.0},
+            non_morphological_features={},
+            confidence=1.0,
+            use_state=False,
+            sender_id="test",
+            sender_type="SM",
+        )
+        two_d_sm._observation_processor.process = Mock(return_value=percept)
+
+        msg = two_d_sm.step(
+            ctx=RuntimeContext(rng=np.random.RandomState()),
+            observation=sentinel.raw_observation,
+            motor_only_step=False,
+        )
+
+        assert msg.use_state is False
+        assert "pose_vectors" not in msg.morphological_features
+        np.testing.assert_allclose(msg.displacement["displacement"], np.zeros(3))
+        assert two_d_sm._tangent_frame is None
+
+    def test_step_sends_2d_surface_normal_when_no_edge_is_detected(self):
+        normal_3d = np.array([0.0, np.sqrt(0.5), np.sqrt(0.5)])
+        pose_3d = np.array(
+            [
+                normal_3d,
+                [1.0, 0.0, 0.0],
+                [0.0, np.sqrt(0.5), -np.sqrt(0.5)],
+            ]
+        )
+        two_d_sm = make_2d_sm(edge_detector=Mock(return_value=make_no_edge()))
+        percept = make_message(
+            location=np.array([1.0, 2.0, 3.0]),
+            on_object=True,
+            use_state=True,
+            pose_vectors=pose_3d,
+            pose_fully_defined=True,
+            sender_id="test",
+        )
+        two_d_sm._observation_processor.process = Mock(return_value=percept)
+
+        msg = two_d_sm.step(
+            ctx=RuntimeContext(rng=np.random.RandomState()),
+            observation=sentinel.raw_observation,
+            motor_only_step=False,
+        )
+
+        np.testing.assert_allclose(
+            msg.morphological_features["pose_vectors"][0],
+            [0.0, 0.0, 1.0],
+            atol=DEFAULT_TOLERANCE,
+        )
+        assert msg.morphological_features["pose_fully_defined"] is False
+        np.testing.assert_allclose(
+            two_d_sm._tangent_frame.normal,
+            normal_3d,
+            atol=DEFAULT_TOLERANCE,
+        )
 
     def test_edge_detector_not_required_when_edge_features_not_requested(self):
         two_d_sm = TwoDSensorModule(
