@@ -138,16 +138,17 @@ A clean straight edge has one large eigenvalue and one small eigenvalue; a corne
 \]
 Note that coherence has a range of $[0, 1]$ and values closer to 1 indicate presence of a clear edge. In Monty, only edges whose $\text{coherence} > 0.5$ is considered to be a true detected edge by default, though this can be adjusted by setting the \texttt{coherence\_threshold} for \texttt{EdgeDetector} in configurations.
 
-Next, edge strength is defined as $\sqrt{\lambda_{\max}}$, and indicates the dominant gradient magnitude scale of the patch~\cite{khan_corner_detection,opencv_gst}. The example patches below should span different coherence and edge-strength values to give a qualitative sense of how these scores change across weak texture, clean straight edges, corners, and ambiguous gradient evidence.
+Next, edge strength is defined as $\sqrt{\lambda_{\max}}$, and indicates the dominant gradient magnitude scale of the patch~\cite{khan_corner_detection,opencv_gst}. The example patches below show three ways the same 90-degree white line can produce lower edge-strength values: reduced contrast, increased blur, and movement away from the center-weighted detector support.
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=\textwidth]{../figures/edge_quality_examples/edge_quality_contact_sheet.png}
+  \includegraphics[width=0.82\textwidth]{../figures/edge_strength_examples/edge_strength_contact_sheet.png}
   \caption{Synthetic 64x64 texture patches illustrating how \texttt{EdgeDetector}
-  reports edge strength and coherence for weak, clean, blurred, ambiguous, and
-  noisy line evidence. Scores are measured by the current implementation using
-  the default detector parameters.}
-  \label{fig:edge-quality-examples}
+  edge strength decreases as a 90-degree white line loses contrast, becomes
+  blurred, or moves outside the center-weighted support. Yellow arrows are drawn
+  after scoring to show the detected edge angle without affecting the reported
+  values.}
+  \label{fig:edge-strength-examples}
 \end{figure}
 
 Finally, \texttt{EdgeDetector} checks whether the detected RGB edge corresponds to a depth discontinuity, as we want to extract texture edges on a surface (e.g. logo on a mug), rather than object boundaries (e.g. mug against black void).

@@ -1,0 +1,10 @@
+index,filename,row,name,label,background,blur_sigma,x_position,edge_strength,coherence,angle_degrees,has_edge,is_geometric_edge
+1,01_contrast_black.png,contrast,contrast_black,contrast: bg 0,0,0.0,32,2.942331,1.000000,90.0,True,False
+2,02_contrast_dark_gray.png,contrast,contrast_dark_gray,contrast: bg 64,64,0.0,32,2.204157,1.000000,90.0,True,False
+3,03_contrast_gray.png,contrast,contrast_gray,contrast: bg 128,128,0.0,32,1.466155,1.000000,90.0,True,False
+4,04_blur_none.png,blur,blur_none,blur: sigma 0,0,0.0,32,2.942331,1.000000,90.0,True,False
+5,05_blur_moderate.png,blur,blur_moderate,blur: sigma 1,0,1.0,32,1.934615,1.000000,90.0,True,False
+6,06_blur_strong.png,blur,blur_strong,blur: sigma 4,0,4.0,32,0.316403,1.000000,90.0,True,False
+7,07_off_center_centered.png,off_center,off_center_centered,off-center: x 32,0,0.0,32,2.942331,1.000000,90.0,True,False
+8,08_off_center_near_edge.png,off_center,off_center_near_edge,off-center: x 48,0,0.0,48,2.730484,1.000000,90.0,True,False
+9,09_off_center_outside.png,off_center,off_center_outside,off-center: x 50,0,0.0,50,0.000000,0.000000,,False,False
