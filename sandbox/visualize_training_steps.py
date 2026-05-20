@@ -30,6 +30,7 @@ from vedo import Line, Mesh, Plotter, Points, Sphere, Text2D
 # Helpers (standalone copies from visualize_learned_edges.py)
 # ---------------------------------------------------------------------------
 
+
 def _normalize_rows(V, eps=1e-12):
     V = np.asarray(V, float)
     n = np.linalg.norm(V, axis=1, keepdims=True)
@@ -72,11 +73,14 @@ def scalar_to_rgb(values, vmin=None, vmax=None):
     choices_r = [v, q, p, p, tt, v]
     choices_g = [tt, v, v, q, p, p]
     choices_b = [p, p, tt, v, v, q]
-    rgb = np.stack([
-        np.select(conditions, choices_r),
-        np.select(conditions, choices_g),
-        np.select(conditions, choices_b),
-    ], axis=1)
+    rgb = np.stack(
+        [
+            np.select(conditions, choices_r),
+            np.select(conditions, choices_g),
+            np.select(conditions, choices_b),
+        ],
+        axis=1,
+    )
     return (rgb * 255).astype(np.uint8)
 
 
@@ -116,7 +120,7 @@ def _raycast_closest(origins, directions, vertices, faces):
         e2 = v2 - v0  # (3,)
 
         h = np.cross(directions, e2)  # (N, 3)
-        a = np.dot(h, e1)             # (N,)
+        a = np.dot(h, e1)  # (N,)
 
         valid = np.abs(a) > EPS
         if not valid.any():
@@ -192,6 +196,7 @@ def _compute_gaze_directions(action_sequence, n_steps):
 # Data loading
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class EpisodeData:
     """Parsed LM buffer data for a single episode."""
@@ -249,9 +254,7 @@ class EpisodeData:
         target = lm.get("target", {})
         object_name = target.get("object", "unknown")
         object_position = np.asarray(target.get("position", [0, 0, 0]), float)
-        object_rotation = np.asarray(
-            target.get("quat_rotation", [0, 0, 0, 1]), float
-        )
+        object_rotation = np.asarray(target.get("quat_rotation", [0, 0, 0, 1]), float)
 
         stepwise_targets = lm.get("stepwise_targets_list", [])
 
@@ -259,14 +262,10 @@ class EpisodeData:
         sensor_positions = None
         sm_props = episode_dict.get("SM_0", {}).get("sm_properties", [])
         if sm_props:
-            sensor_positions = np.array(
-                [p["sm_location"] for p in sm_props], float
-            )
+            sensor_positions = np.array([p["sm_location"] for p in sm_props], float)
 
         # Extract action_sequence (used for sensor fallback and 2D gaze)
-        action_seq = episode_dict.get(
-            "motor_system", {}
-        ).get("action_sequence", [])
+        action_seq = episode_dict.get("motor_system", {}).get("action_sequence", [])
 
         # Fallback: constant agent position from motor_system.action_sequence
         if sensor_positions is None and action_seq:
@@ -319,9 +318,7 @@ def load_episode(json_path, episode=None):
 
     if episode is not None:
         if episode not in episode_keys:
-            raise ValueError(
-                f"Episode {episode} not found. Available: {episode_keys}"
-            )
+            raise ValueError(f"Episode {episode} not found. Available: {episode_keys}")
         target_episode = episode
     else:
         target_episode = episode_keys[0]
@@ -374,6 +371,7 @@ def load_object_mesh(object_name, mesh_dir, object_rotation, alpha=1.0):
 
     # Apply rotation — mesh stays at origin to match the point cloud
     from scipy.spatial.transform import Rotation
+
     rot = Rotation.from_quat(object_rotation)  # xyzw
     verts = rot.apply(verts)
 
@@ -407,6 +405,7 @@ def load_object_mesh(object_name, mesh_dir, object_rotation, alpha=1.0):
 # Visualizer
 # ---------------------------------------------------------------------------
 
+
 class TrainingStepVisualizer:
     """Interactive step-through visualizer for training episodes."""
 
@@ -434,7 +433,9 @@ class TrainingStepVisualizer:
         mode = self._color_modes[self._color_mode_idx]
 
         if mode == "step_order":
-            return scalar_to_rgb(np.arange(n), vmin=0, vmax=max(self.data.n_steps - 1, 1))
+            return scalar_to_rgb(
+                np.arange(n), vmin=0, vmax=max(self.data.n_steps - 1, 1)
+            )
         elif mode in ("edge_strength", "coherence"):
             vals = self.data.features[mode][:n]
             return scalar_to_rgb(vals, vmin=0, vmax=1)
@@ -474,8 +475,12 @@ class TrainingStepVisualizer:
             lines.append(f"  hsv: ({h:.2f}, {s:.2f}, {v:.2f})")
 
         pc_key = next(
-            (k for k in ("principal_curvatures_log", "principal_curvatures")
-             if k in self.data.features), None
+            (
+                k
+                for k in ("principal_curvatures_log", "principal_curvatures")
+                if k in self.data.features
+            ),
+            None,
         )
         if pc_key is not None:
             pc = self.data.features[pc_key][step]
@@ -532,8 +537,11 @@ class TrainingStepVisualizer:
                     half = (arrow_scale * coherence_vals[i]) / 2
                     p = locs[idx]
                     seg = Line(
-                        p - half * t_vec, p + half * t_vec,
-                        c="black", lw=2, alpha=0.7,
+                        p - half * t_vec,
+                        p + half * t_vec,
+                        c="black",
+                        lw=2,
+                        alpha=0.7,
                     )
                     self._dynamic_actors.append(seg)
 
@@ -544,8 +552,11 @@ class TrainingStepVisualizer:
             self._dynamic_actors.append(agent_marker)
 
             gaze = Line(
-                spos, locs[step],
-                c="yellow", alpha=0.6, lw=1,
+                spos,
+                locs[step],
+                c="yellow",
+                alpha=0.6,
+                lw=1,
             )
             self._dynamic_actors.append(gaze)
 
@@ -590,7 +601,10 @@ class TrainingStepVisualizer:
         # Sensor trajectory (faint line showing all positions)
         if self.sensor_positions is not None and len(self.sensor_positions) >= 2:
             sensor_traj = Line(
-                self.sensor_positions, c="orange", alpha=0.3, lw=1,
+                self.sensor_positions,
+                c="orange",
+                alpha=0.3,
+                lw=1,
             )
             self.plotter.add(sensor_traj)
 
@@ -674,26 +688,34 @@ def main():
         help="Path to detailed_run_stats.json",
     )
     parser.add_argument(
-        "--episode", type=int, default=None,
+        "--episode",
+        type=int,
+        default=None,
         help="Episode number to visualize (default: first available)",
     )
     parser.add_argument(
-        "--mesh_dir", default=DEFAULT_MESH_DIR,
+        "--mesh_dir",
+        default=DEFAULT_MESH_DIR,
         help="Base directory containing per-object mesh folders "
-             f"(default: {DEFAULT_MESH_DIR})",
+        f"(default: {DEFAULT_MESH_DIR})",
     )
     parser.add_argument(
-        "--no_mesh", action="store_true",
+        "--no_mesh",
+        action="store_true",
         help="Disable mesh overlay",
     )
     parser.add_argument(
-        "--agent_pos", type=float, nargs=3, default=None,
+        "--agent_pos",
+        type=float,
+        nargs=3,
+        default=None,
         metavar=("X", "Y", "Z"),
         help="Override agent position (world coords). Used as fallback when "
-             "SM_0 sensor data is not available in the JSON.",
+        "SM_0 sensor data is not available in the JSON.",
     )
     parser.add_argument(
-        "--no_agent", action="store_true",
+        "--no_agent",
+        action="store_true",
         help="Disable agent marker and gaze line",
     )
     args = parser.parse_args()
@@ -749,14 +771,13 @@ def main():
             and sensor_positions is not None
         )
         if can_project:
-            gaze_dirs = _compute_gaze_directions(
-                data.action_sequence, data.n_steps
-            )
+            gaze_dirs = _compute_gaze_directions(data.action_sequence, data.n_steps)
 
             agent_local = sensor_positions[0]
             origins = np.tile(agent_local, (data.n_steps, 1))
             hit_points, hit_mask = _raycast_closest(
-                origins, gaze_dirs,
+                origins,
+                gaze_dirs,
                 np.asarray(tri_geom.vertices, float),
                 np.asarray(tri_geom.faces, int),
             )
@@ -769,9 +790,7 @@ def main():
                 data.features[key] = data.features[key][hit_mask]
             if data.stepwise_targets:
                 hit_indices = np.where(hit_mask)[0]
-                data.stepwise_targets = [
-                    data.stepwise_targets[i] for i in hit_indices
-                ]
+                data.stepwise_targets = [data.stepwise_targets[i] for i in hit_indices]
             sensor_positions = sensor_positions[hit_mask]
             data.n_steps = n_hits
         else:

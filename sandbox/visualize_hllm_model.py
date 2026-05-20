@@ -19,6 +19,7 @@ from vedo import LegendBox, Plotter, Points
 # Object ID encoding (mirrors EvidenceGraphLM._object_id_to_features)
 # ---------------------------------------------------------------------------
 
+
 def compute_object_id(name):
     """Compute the integer object_id for a graph name.
 
@@ -42,6 +43,7 @@ def build_id_to_name_mapping(state_dict, lm_id=0):
 # Data extraction
 # ---------------------------------------------------------------------------
 
+
 def _to_numpy(x):
     """Convert Tensor or array-like to numpy."""
     if isinstance(x, torch.Tensor):
@@ -49,8 +51,9 @@ def _to_numpy(x):
     return np.asarray(x)
 
 
-def extract_lm_channel_data(state_dict, object_name, lm_id=1,
-                             input_channel="learning_module_0"):
+def extract_lm_channel_data(
+    state_dict, object_name, lm_id=1, input_channel="learning_module_0"
+):
     """Extract positions and object_id values from an LM channel.
 
     Returns:
@@ -74,6 +77,7 @@ def extract_lm_channel_data(state_dict, object_name, lm_id=1,
 # Grid-averaging artifact correction
 # ---------------------------------------------------------------------------
 
+
 def snap_to_nearest_id(raw_ids, known_ids):
     """Snap each raw object_id to the nearest known integer ID.
 
@@ -92,12 +96,12 @@ def snap_to_nearest_id(raw_ids, known_ids):
 # ---------------------------------------------------------------------------
 
 SUBOBJECT_COLORS = [
-    ("cube", (0, 160, 223)),       # numenta_blue #00a0df
-    ("disk", (247, 55, 189)),      # pink #f737bd
-    ("tbp", (93, 17, 191)),        # purple #5d11bf
-    ("numenta", (0, 142, 67)),     # green #008e43
+    ("cube", (0, 160, 223)),  # numenta_blue #00a0df
+    ("disk", (247, 55, 189)),  # pink #f737bd
+    ("tbp", (93, 17, 191)),  # purple #5d11bf
+    ("numenta", (0, 142, 67)),  # green #008e43
 ]
-FALLBACK_COLOR = (160, 160, 160)   # gray
+FALLBACK_COLOR = (160, 160, 160)  # gray
 
 
 def color_for_name(name):
@@ -112,6 +116,7 @@ def color_for_name(name):
 # ---------------------------------------------------------------------------
 # Statistics
 # ---------------------------------------------------------------------------
+
 
 def print_statistics(composite_data, id_to_name):
     """Print per-object stats: point count, bounds, sub-object distribution."""
@@ -144,6 +149,7 @@ def print_statistics(composite_data, id_to_name):
 # Visualization
 # ---------------------------------------------------------------------------
 
+
 def visualize_combined(composite_data, id_to_name, title=None):
     """Vedo plot of all composite objects, points colored by sub-object ID."""
     all_points = []
@@ -163,8 +169,7 @@ def visualize_combined(composite_data, id_to_name, title=None):
     print(f"Visualizing {len(pts)} total points")
 
     window_title = title or "H-LLM Model: LM1 colored by LM0 object_id"
-    plotter = Plotter(size=(1400, 1000),
-                      title=window_title)
+    plotter = Plotter(size=(1400, 1000), title=window_title)
     point_cloud = Points(pts, r=8)
     point_cloud.pointcolors = cols.tolist()
     plotter.add(point_cloud)
@@ -184,8 +189,7 @@ def visualize_combined(composite_data, id_to_name, title=None):
                 legend_entries.append((name, marker))
 
     legend_entries.sort(key=lambda pair: pair[0])
-    lb = LegendBox([m for _, m in legend_entries], width=0.2, height=0.15,
-                    padding=2)
+    lb = LegendBox([m for _, m in legend_entries], width=0.2, height=0.15, padding=2)
     plotter.add(lb)
 
     # Camera: look straight at XY plane from +Z
@@ -212,6 +216,7 @@ def visualize_combined(composite_data, id_to_name, title=None):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     default_path = os.path.join(
         os.environ.get("MONTY_MODELS", ""),
@@ -231,19 +236,27 @@ def main():
         help="Path to the pretrained model.pt file",
     )
     parser.add_argument(
-        "--lm0_id", type=int, default=0,
+        "--lm0_id",
+        type=int,
+        default=0,
         help="LM index for the lower-level module (default: 0)",
     )
     parser.add_argument(
-        "--lm1_id", type=int, default=1,
+        "--lm1_id",
+        type=int,
+        default=1,
         help="LM index for the higher-level module (default: 1)",
     )
     parser.add_argument(
-        "--channel", type=str, default="learning_module_0",
+        "--channel",
+        type=str,
+        default="learning_module_0",
         help="Input channel on LM1 that carries LM0's object_id",
     )
     parser.add_argument(
-        "--objects", type=str, nargs="+",
+        "--objects",
+        type=str,
+        nargs="+",
         default=["007_disk_tbp_horz"],
         help="Composite object name(s) to visualize (default: 007_disk_tbp_horz)",
     )
@@ -275,7 +288,8 @@ def main():
     for obj_name in selected:
         try:
             pos, raw_ids = extract_lm_channel_data(
-                state_dict, obj_name,
+                state_dict,
+                obj_name,
                 lm_id=args.lm1_id,
                 input_channel=args.channel,
             )
