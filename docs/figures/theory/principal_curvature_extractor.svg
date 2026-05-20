@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900" role="img" aria-labelledby="title desc">
+  <title id="title">PrincipalCurvatureExtractor concept diagram</title>
+  <desc id="desc">A flow diagram showing how PrincipalCurvatureExtractor converts a local point cloud patch into principal curvatures, principal directions, and validity.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#34546f"/>
+    </marker>
+    <marker id="arrow-soft" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6c7f8f"/>
+    </marker>
+    <linearGradient id="surfaceGradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#d9f0ec"/>
+      <stop offset="100%" stop-color="#b7d7ef"/>
+    </linearGradient>
+    <style>
+      .page { fill: #f8faf8; }
+      .title { font: 700 34px Arial, sans-serif; fill: #1c2d38; }
+      .subtitle { font: 400 16px Arial, sans-serif; fill: #52616c; }
+      .section-title { font: 700 18px Arial, sans-serif; fill: #1c2d38; }
+      .label { font: 700 15px Arial, sans-serif; fill: #1c2d38; }
+      .small { font: 400 13px Arial, sans-serif; fill: #394a55; }
+      .tiny { font: 400 11px Arial, sans-serif; fill: #53636d; }
+      .mono { font: 400 13px "SFMono-Regular", Consolas, monospace; fill: #20323d; }
+      .box { fill: #ffffff; stroke: #cad6dd; stroke-width: 1.5; rx: 8; }
+      .box-blue { fill: #eef7fb; stroke: #9fc7d8; stroke-width: 1.5; rx: 8; }
+      .box-green { fill: #eef8f2; stroke: #9bc9ad; stroke-width: 1.5; rx: 8; }
+      .box-amber { fill: #fff7e8; stroke: #dec180; stroke-width: 1.5; rx: 8; }
+      .box-rose { fill: #fff1f1; stroke: #e0a1a1; stroke-width: 1.5; rx: 8; }
+      .arrow { fill: none; stroke: #34546f; stroke-width: 2.2; marker-end: url(#arrow); }
+      .arrow-soft { fill: none; stroke: #6c7f8f; stroke-width: 1.7; stroke-dasharray: 5 5; marker-end: url(#arrow-soft); }
+      .axis { stroke-width: 3; stroke-linecap: round; marker-end: url(#arrow); }
+      .surface-line { fill: none; stroke: #6c9bb8; stroke-width: 1.4; opacity: 0.7; }
+      .dot { fill: #2f6f8f; stroke: #ffffff; stroke-width: 1.5; }
+      .center-dot { fill: #db5f57; stroke: #ffffff; stroke-width: 2; }
+      .matrix { fill: #ffffff; stroke: #b8c7cf; stroke-width: 1.2; rx: 6; }
+      .badge { fill: #20323d; rx: 10; }
+      .badge-text { font: 700 12px Arial, sans-serif; fill: #ffffff; }
+    </style>
+  </defs>
+
+  <rect class="page" x="0" y="0" width="1400" height="900"/>
+
+  <text class="title" x="60" y="58">PrincipalCurvatureExtractor</text>
+  <text class="subtitle" x="60" y="85">From a local 3D point patch to curvature values, orthogonal principal directions, and a validity flag.</text>
+
+  <!-- Left: local patch and frame -->
+  <rect class="box-blue" x="60" y="125" width="360" height="300"/>
+  <text class="section-title" x="84" y="158">1. Local surface patch</text>
+  <text class="small" x="84" y="181">Input: point_cloud_base, center_id, surface_normal</text>
+
+  <path d="M 100 330 C 165 250, 260 235, 380 300 C 320 370, 180 390, 100 330 Z" fill="url(#surfaceGradient)" stroke="#7faec7" stroke-width="2"/>
+  <path class="surface-line" d="M 125 325 C 185 285, 275 275, 360 305"/>
+  <path class="surface-line" d="M 145 350 C 210 315, 300 310, 345 330"/>
+  <path class="surface-line" d="M 150 295 C 215 340, 285 360, 345 315"/>
+  <path class="surface-line" d="M 190 268 C 235 320, 285 350, 330 340"/>
+
+  <circle class="dot" cx="155" cy="322" r="5"/>
+  <circle class="dot" cx="205" cy="296" r="5"/>
+  <circle class="dot" cx="255" cy="288" r="5"/>
+  <circle class="dot" cx="310" cy="296" r="5"/>
+  <circle class="dot" cx="350" cy="315" r="5"/>
+  <circle class="dot" cx="185" cy="356" r="5"/>
+  <circle class="dot" cx="245" cy="340" r="5"/>
+  <circle class="dot" cx="305" cy="345" r="5"/>
+  <circle class="center-dot" cx="245" cy="318" r="7"/>
+  <text class="tiny" x="254" y="312">center</text>
+
+  <line class="axis" x1="245" y1="318" x2="245" y2="235" stroke="#db5f57"/>
+  <text class="label" x="255" y="245">surface_normal</text>
+  <line class="axis" x1="245" y1="318" x2="335" y2="292" stroke="#3c7d65"/>
+  <text class="label" x="322" y="282">frame_u</text>
+  <line class="axis" x1="245" y1="318" x2="178" y2="275" stroke="#6b5ca5"/>
+  <text class="label" x="118" y="270">frame_v</text>
+
+  <rect class="box" x="84" y="370" width="312" height="34"/>
+  <text class="mono" x="104" y="392">point_cloud[:, :3] -= center</text>
+
+  <!-- Projection and regression -->
+  <rect class="box" x="500" y="125" width="360" height="300"/>
+  <text class="section-title" x="524" y="158">2. Fit a local height surface</text>
+
+  <rect class="matrix" x="528" y="186" width="304" height="78"/>
+  <text class="label" x="550" y="211">Project into tangent frame</text>
+  <text class="mono" x="550" y="235">u_coords = point_cloud @ frame_u</text>
+  <text class="mono" x="550" y="255">v_coords = point_cloud @ frame_v</text>
+
+  <rect class="matrix" x="528" y="286" width="304" height="98"/>
+  <text class="label" x="550" y="311">Quadratic regression</text>
+  <text class="mono" x="550" y="335">normal_offsets = a*u^2 + b*v^2</text>
+  <text class="mono" x="550" y="355">               + c*u*v + d*u + e*v (+ f)</text>
+  <text class="tiny" x="550" y="375">Solves normal equations for quadratic_params.</text>
+
+  <path class="arrow" d="M 420 275 C 450 275, 465 275, 498 275"/>
+
+  <!-- Fundamental forms -->
+  <rect class="box-green" x="940" y="125" width="400" height="300"/>
+  <text class="section-title" x="964" y="158">3. Build the fundamental forms</text>
+
+  <rect class="matrix" x="968" y="188" width="348" height="82"/>
+  <text class="label" x="990" y="212">First fundamental form</text>
+  <text class="small" x="990" y="234">Surface metric in fitted (u, v) coordinates.</text>
+  <text class="mono" x="990" y="254">[[1 + d*d, d*e], [d*e, 1 + e*e]]</text>
+
+  <rect class="matrix" x="968" y="298" width="348" height="82"/>
+  <text class="label" x="990" y="322">Second fundamental form</text>
+  <text class="small" x="990" y="344">Curvature form in fitted (u, v) coordinates.</text>
+  <text class="mono" x="990" y="364">[[2*a, c], [c, 2*b]]</text>
+
+  <path class="arrow" d="M 860 275 C 890 275, 905 275, 938 275"/>
+
+  <!-- Eigensolve -->
+  <rect class="box-amber" x="170" y="510" width="470" height="260"/>
+  <text class="section-title" x="194" y="543">4. Solve the generalized eigenproblem</text>
+
+  <rect class="matrix" x="198" y="575" width="414" height="92"/>
+  <text class="label" x="220" y="600">Use SciPy because this is generalized</text>
+  <text class="mono" x="220" y="625">curvature_values, direction_coeffs =</text>
+  <text class="mono" x="220" y="645">    scipy.linalg.eigh(second_form, first_form)</text>
+  <text class="tiny" x="220" y="665">Solves: second_form * x = k * first_form * x</text>
+
+  <rect class="box" x="198" y="692" width="414" height="44"/>
+  <text class="mono" x="220" y="720">sort by curvature_values descending</text>
+
+  <path class="arrow" d="M 1140 425 C 1140 470, 965 490, 640 585"/>
+
+  <!-- Direction reconstruction -->
+  <rect class="box" x="730" y="510" width="330" height="260"/>
+  <text class="section-title" x="754" y="543">5. Reconstruct 3D directions</text>
+
+  <rect class="matrix" x="758" y="575" width="274" height="70"/>
+  <text class="label" x="780" y="600">Surface tangent basis</text>
+  <text class="mono" x="780" y="624">surface_tangent_u = frame_u + d*N</text>
+  <text class="mono" x="780" y="644">surface_tangent_v = frame_v + e*N</text>
+
+  <rect class="matrix" x="758" y="670" width="274" height="62"/>
+  <text class="label" x="780" y="695">Principal directions</text>
+  <text class="mono" x="780" y="718">pc_dir = normalize(alpha*Tu + beta*Tv)</text>
+
+  <path class="arrow" d="M 640 640 C 675 640, 695 640, 728 640"/>
+
+  <!-- Output -->
+  <rect class="box-rose" x="1130" y="510" width="210" height="260"/>
+  <text class="section-title" x="1154" y="543">6. Output</text>
+
+  <rect class="badge" x="1158" y="572" width="154" height="24"/>
+  <text class="badge-text" x="1172" y="589">PrincipalCurvatureFeatures</text>
+  <text class="mono" x="1158" y="630">k1</text>
+  <text class="mono" x="1158" y="654">k2</text>
+  <text class="mono" x="1158" y="678">pc1_dir</text>
+  <text class="mono" x="1158" y="702">pc2_dir</text>
+  <text class="mono" x="1158" y="726">valid_pc</text>
+
+  <path class="arrow" d="M 1060 640 C 1090 640, 1102 640, 1128 640"/>
+
+  <!-- Bottom note -->
+  <rect class="box" x="60" y="805" width="1280" height="55"/>
+  <text class="label" x="84" y="830">Why the generalized solve matters</text>
+  <text class="small" x="84" y="851">Principal directions are orthogonal under the surface metric. Solving the generalized symmetric problem and reconstructing through the fitted tangent basis gives 3D directions suitable for arc-length correction.</text>
+
+  <!-- Invalid path note -->
+  <path class="arrow-soft" d="M 620 205 C 660 115, 855 95, 990 130"/>
+  <text class="tiny" x="662" y="114">If the normal equations or eigensolve fail, return zeros with valid_pc = false.</text>
+</svg>

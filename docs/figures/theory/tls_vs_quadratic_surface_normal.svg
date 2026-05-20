@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="820" viewBox="0 0 1400 820" role="img" aria-labelledby="title desc">
+  <title id="title">TLS plane normal versus quadratic surface normal</title>
+  <desc id="desc">A side-by-side conceptual diagram showing the same kind of local point cloud fitted by a total-least-squares plane on the left and by a quadratic surface on the right, with a small difference between the resulting normals.</desc>
+
+  <defs>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#d45b55"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2f7194"/>
+    </marker>
+    <marker id="arrow-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6c7f8f"/>
+    </marker>
+    <linearGradient id="planeGradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#d7eaf4"/>
+      <stop offset="100%" stop-color="#eef7fb"/>
+    </linearGradient>
+    <linearGradient id="surfaceGradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#d8efe4"/>
+      <stop offset="100%" stop-color="#b9d7ee"/>
+    </linearGradient>
+    <style>
+      .page { fill: #f8faf8; }
+      .title { font: 700 34px Arial, sans-serif; fill: #1c2d38; }
+      .subtitle { font: 400 16px Arial, sans-serif; fill: #52616c; }
+      .panel { fill: #ffffff; stroke: #cbd8df; stroke-width: 1.5; rx: 8; }
+      .panel-title { font: 700 22px Arial, sans-serif; fill: #1c2d38; }
+      .label { font: 700 15px Arial, sans-serif; fill: #1c2d38; }
+      .small { font: 400 14px Arial, sans-serif; fill: #394a55; }
+      .tiny { font: 400 12px Arial, sans-serif; fill: #53636d; }
+      .mono { font: 400 13px "SFMono-Regular", Consolas, monospace; fill: #20323d; }
+      .point { fill: #334f5f; stroke: #ffffff; stroke-width: 1.4; }
+      .point-faint { fill: #7791a0; stroke: #ffffff; stroke-width: 1.1; opacity: 0.75; }
+      .center { fill: #d45b55; stroke: #ffffff; stroke-width: 2; }
+      .plane { fill: url(#planeGradient); stroke: #7aa8bf; stroke-width: 2; opacity: 0.92; }
+      .surface { fill: url(#surfaceGradient); stroke: #5f9db4; stroke-width: 2; opacity: 0.95; }
+      .surface-line { fill: none; stroke: #5f9db4; stroke-width: 1.4; opacity: 0.72; }
+      .normal-tls { stroke: #d45b55; stroke-width: 4; stroke-linecap: round; marker-end: url(#arrow-red); }
+      .normal-quad { stroke: #2f7194; stroke-width: 4; stroke-linecap: round; marker-end: url(#arrow-blue); }
+      .reference-normal { stroke: #d45b55; stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 7 6; marker-end: url(#arrow-red); opacity: 0.75; }
+      .guide { fill: none; stroke: #6c7f8f; stroke-width: 1.6; stroke-dasharray: 6 6; marker-end: url(#arrow-gray); }
+      .note { fill: #fff7e8; stroke: #dec180; stroke-width: 1.3; rx: 8; }
+      .box { fill: #eef7fb; stroke: #9fc7d8; stroke-width: 1.2; rx: 8; }
+    </style>
+  </defs>
+
+  <rect class="page" x="0" y="0" width="1400" height="820"/>
+
+  <text class="title" x="60" y="58">Why TLS and quadratic-fit normals can differ</text>
+  <text class="subtitle" x="60" y="86">TLS estimates a best-fit plane normal. The quadratic model can have its own center tangent plane when its fitted linear terms are nonzero.</text>
+
+  <!-- Left panel -->
+  <rect class="panel" x="60" y="125" width="600" height="545"/>
+  <text class="panel-title" x="92" y="165">Left: total least squares plane fit</text>
+  <text class="small" x="92" y="190">Minimizes orthogonal point-to-plane error over local on-object neighbors.</text>
+
+  <!-- Same point layout as the right panel, but approximated by a plane. -->
+  <polygon class="plane" points="135,500 545,360 610,420 200,560"/>
+  <line x1="135" y1="500" x2="545" y2="360" stroke="#7aa8bf" stroke-width="1.4" opacity="0.6"/>
+  <line x1="200" y1="560" x2="610" y2="420" stroke="#7aa8bf" stroke-width="1.4" opacity="0.6"/>
+  <line x1="135" y1="500" x2="200" y2="560" stroke="#7aa8bf" stroke-width="1.4" opacity="0.6"/>
+  <line x1="545" y1="360" x2="610" y2="420" stroke="#7aa8bf" stroke-width="1.4" opacity="0.6"/>
+  <line x1="198" y1="478" x2="608" y2="382" stroke="#7aa8bf" stroke-width="1.2" opacity="0.45"/>
+  <line x1="165" y1="530" x2="575" y2="408" stroke="#7aa8bf" stroke-width="1.2" opacity="0.45"/>
+  <line x1="220" y1="470" x2="205" y2="558" stroke="#7aa8bf" stroke-width="1.2" opacity="0.45"/>
+  <line x1="320" y1="436" x2="305" y2="524" stroke="#7aa8bf" stroke-width="1.2" opacity="0.45"/>
+  <line x1="428" y1="400" x2="412" y2="488" stroke="#7aa8bf" stroke-width="1.2" opacity="0.45"/>
+  <line x1="526" y1="368" x2="510" y2="456" stroke="#7aa8bf" stroke-width="1.2" opacity="0.45"/>
+
+  <circle class="point-faint" cx="178" cy="500" r="6"/>
+  <circle class="point" cx="260" cy="450" r="6"/>
+  <circle class="point" cx="358" cy="411" r="6"/>
+  <circle class="point" cx="468" cy="388" r="6"/>
+  <circle class="point-faint" cx="565" cy="403" r="6"/>
+  <circle class="point" cx="208" cy="542" r="6"/>
+  <circle class="point" cx="300" cy="490" r="6"/>
+  <circle class="center" cx="380" cy="462" r="8"/>
+  <circle class="point" cx="460" cy="446" r="6"/>
+  <circle class="point-faint" cx="545" cy="467" r="6"/>
+  <circle class="point-faint" cx="240" cy="578" r="6"/>
+  <circle class="point" cx="338" cy="529" r="6"/>
+  <circle class="point" cx="438" cy="506" r="6"/>
+  <circle class="point-faint" cx="520" cy="519" r="6"/>
+
+  <line class="normal-tls" x1="380" y1="462" x2="351" y2="294"/>
+  <text class="label" x="242" y="288">TLS surface_normal</text>
+  <text class="tiny" x="394" y="458">center</text>
+
+  <rect class="box" x="92" y="565" width="526" height="68"/>
+  <text class="mono" x="116" y="592">surface_normal = eigenvector(min variance)</text>
+  <text class="small" x="116" y="616">Good low-variance estimate of an average local tangent plane.</text>
+
+  <!-- Right panel -->
+  <rect class="panel" x="740" y="125" width="600" height="545"/>
+  <text class="panel-title" x="772" y="165">Right: quadratic surface fit</text>
+  <text class="small" x="772" y="190">Fits normal-direction height over the TLS reference frame.</text>
+
+  <!-- Curved rectangular patch, like a small strip on a cylinder. -->
+  <path class="surface" d="M 815 505 C 900 415, 1135 355, 1282 410 L 1225 535 C 1080 500, 925 540, 835 595 Z"/>
+  <path class="surface-line" d="M 815 505 C 900 415, 1135 355, 1282 410"/>
+  <path class="surface-line" d="M 824 530 C 910 452, 1125 398, 1268 435"/>
+  <path class="surface-line" d="M 829 558 C 924 488, 1110 442, 1248 480"/>
+  <path class="surface-line" d="M 835 595 C 925 540, 1080 500, 1225 535"/>
+  <path class="surface-line" d="M 858 490 C 850 522, 842 557, 835 595"/>
+  <path class="surface-line" d="M 940 442 C 935 475, 930 512, 925 540"/>
+  <path class="surface-line" d="M 1040 402 C 1035 438, 1030 476, 1024 515"/>
+  <path class="surface-line" d="M 1148 380 C 1138 420, 1128 462, 1118 505"/>
+  <path class="surface-line" d="M 1246 398 C 1238 438, 1230 485, 1225 535"/>
+  <path d="M 850 478 C 930 410, 1112 360, 1255 392" fill="none" stroke="#2f7194" stroke-width="3" opacity="0.45"/>
+  <text class="tiny" x="1188" y="374">cylinder-like bend</text>
+
+  <circle class="point-faint" cx="858" cy="506" r="6"/>
+  <circle class="point" cx="940" cy="456" r="6"/>
+  <circle class="point" cx="1038" cy="417" r="6"/>
+  <circle class="point" cx="1148" cy="394" r="6"/>
+  <circle class="point-faint" cx="1245" cy="409" r="6"/>
+  <circle class="point" cx="888" cy="548" r="6"/>
+  <circle class="point" cx="980" cy="496" r="6"/>
+  <circle class="center" cx="1060" cy="468" r="8"/>
+  <circle class="point" cx="1140" cy="452" r="6"/>
+  <circle class="point-faint" cx="1225" cy="473" r="6"/>
+  <circle class="point-faint" cx="920" cy="584" r="6"/>
+  <circle class="point" cx="1018" cy="535" r="6"/>
+  <circle class="point" cx="1118" cy="512" r="6"/>
+  <circle class="point-faint" cx="1200" cy="525" r="6"/>
+
+  <!-- Reference TLS normal and quadratic normal -->
+  <line class="reference-normal" x1="1060" y1="468" x2="1031" y2="300"/>
+  <line class="normal-quad" x1="1060" y1="468" x2="1078" y2="296"/>
+  <path class="guide" d="M 1036 314 C 1050 300, 1061 295, 1075 299"/>
+
+  <text class="label" x="890" y="292">TLS reference normal</text>
+  <text class="label" x="1090" y="292">quadratic center normal</text>
+  <text class="tiny" x="1074" y="464">center</text>
+  <text class="tiny" x="1046" y="326">small angle</text>
+
+  <rect class="box" x="772" y="565" width="526" height="68"/>
+  <text class="mono" x="796" y="592">f(u,v) = a*u^2 + b*v^2 + c*u*v + d*u + e*v</text>
+  <text class="small" x="796" y="616">If d or e is nonzero, the fitted surface is tilted relative to the TLS reference plane.</text>
+
+  <!-- Middle connector -->
+  <path class="guide" d="M 660 398 C 690 398, 710 398, 740 398"/>
+  <text class="tiny" x="668" y="382">same kind of local patch, different model</text>
+
+  <!-- Bottom explanation -->
+  <rect class="note" x="60" y="705" width="1280" height="76"/>
+  <text class="label" x="88" y="733">In code terms</text>
+  <text class="small" x="88" y="756">TLS gives the reference `surface_normal`. The quadratic fit can still have linear terms `d` and `e`, so its center tangent vectors are `surface_tangent_u = frame_u + d*surface_normal` and `surface_tangent_v = frame_v + e*surface_normal`.</text>
+</svg>
