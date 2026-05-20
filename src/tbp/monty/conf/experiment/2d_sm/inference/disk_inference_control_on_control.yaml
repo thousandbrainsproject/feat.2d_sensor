@@ -3,7 +3,6 @@
 defaults:
   - /monty: graph_exp1000_emin_t3_tot2500
   - /monty/motor_system_config: naive_scan_1
-  - /monty/learning_module: displacement_1lm
   - /monty/sensor_module: camera_dist
   - /monty/connectivity: 1lm_1sm
   - /environment: habitat_dist_agent
@@ -33,6 +32,32 @@ experiment:
       env_init_args:
         data_path: ${path.expanduser:${oc.env:MONTY_DATA}/compositional_objects}
     monty_config:
+      learning_modules:
+        learning_module_0:
+          _target_: tbp.monty.frameworks.models.evidence_matching.learning_module.EvidenceGraphLM
+          hypotheses_updater_class: ${monty.class:tbp.monty.frameworks.models.evidence_matching.burst_sampling.BurstSamplingHypothesesUpdater}
+          hypotheses_updater_args:
+            max_nneighbors: 10
+          max_match_distance: 0.01
+          max_graph_size: 0.3
+          num_model_voxels_per_dim: 100
+          tolerances:
+            patch:
+              hsv: ${np.array:[0.1, 0.2, 0.2]}
+          feature_weights:
+            patch:
+              hsv: ${np.array:[1, 0.5, 0.5]}
+              pose_vectors: ${np.array:[0, 2, 1]}
+          x_percent_threshold: 20
+          evidence_threshold_config: all
+          gsg:
+            _target_: tbp.monty.frameworks.models.goal_generation.EvidenceGoalGenerator
+            goal_tolerances:
+              location: 0.015
+            elapsed_steps_factor: 10
+            min_post_goal_success_steps: 5
+            x_percent_scale_factor: 0.75
+            desired_object_distance: 0.03
       motor_system_config:
         motor_system_args:
           policy:
