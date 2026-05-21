@@ -10,8 +10,11 @@
 from __future__ import annotations
 
 import logging
+import re
+from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 import quaternion as qt
 
@@ -38,6 +41,7 @@ from tbp.monty.frameworks.models.sensor_modules import (
 from tbp.monty.frameworks.sensors import SensorID
 from tbp.monty.frameworks.utils.edge_detection import (
     EdgeDetector,
+    EdgeFeatures,
     _angle_to_pose_2d,
 )
 from tbp.monty.frameworks.utils.sensor_processing import (
@@ -85,6 +89,8 @@ class TwoDSensorModule(SensorModule):
         edge_detector: EdgeDetector | None = None,
         noise_params: dict[str, Any] | None = None,
         delta_thresholds: dict[str, Any] | None = None,
+        debug_edge_patch_dir: str | Path | None = None,
+        debug_edge_patch_prefix: str = "edge_patch",
     ):
         """Initialize 2D Sensor Module.
 
@@ -104,6 +110,9 @@ class TwoDSensorModule(SensorModule):
                 check whether the current state's features are significantly different
                 from the previous with tolerances set according to `delta_thresholds`.
                 Defaults to None.
+            debug_edge_patch_dir: Optional directory where detected-edge RGB patches
+                are saved with debug arrow annotations. Defaults to None.
+            debug_edge_patch_prefix: File prefix used for debug edge patch PNGs.
         """
         self._observation_processor = ObservationProcessor(
             features=features,
@@ -143,6 +152,11 @@ class TwoDSensorModule(SensorModule):
         self._previous_3d_location: np.ndarray | None = None
         self._previous_2d_location: np.ndarray = np.zeros(2)
         self._tangent_frame: TangentFrame | None = None
+        self._debug_edge_patch_dir = (
+            None if debug_edge_patch_dir is None else Path(debug_edge_patch_dir)
+        )
+        self._debug_edge_patch_prefix = debug_edge_patch_prefix
+        self._debug_edge_patch_index = 0
 
     def pre_episode(self) -> None:
         self._snapshot_telemetry.reset()
@@ -152,6 +166,7 @@ class TwoDSensorModule(SensorModule):
         self._previous_3d_location = None
         self._previous_2d_location = np.zeros(2)
         self._tangent_frame = None
+        self._debug_edge_patch_index = 0
 
     def update_state(self, agent: AgentState):
         """Update information about the sensor's location and rotation."""
@@ -275,6 +290,8 @@ class TwoDSensorModule(SensorModule):
             )
 
         edge = self.edge_detector(observation)
+        if edge.has_edge:
+            self._save_debug_edge_patch(observation, edge)
 
         if not edge.has_edge or (edge.strength and edge.is_geometric_edge):
             return state
@@ -300,6 +317,99 @@ class TwoDSensorModule(SensorModule):
             state.non_morphological_features["coherence"] = edge.coherence
 
         return state
+
+    def _save_debug_edge_patch(
+        self,
+        observation: SensorObservation,
+        edge: EdgeFeatures,
+    ) -> None:
+        """Save an annotated RGB patch for edge-detector debugging.
+
+        Raises:
+            OSError: If OpenCV fails to write the PNG file.
+        """
+        if self._debug_edge_patch_dir is None:
+            return
+
+        rgb = np.asarray(observation["rgba"][:, :, :3], dtype=np.uint8)
+        annotated = self._annotate_debug_edge_patch(rgb, edge)
+        angle_deg = np.degrees(edge.angle) if edge.angle is not None else np.nan
+        sensor_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", self.sensor_module_id).strip("_")
+        filename = (
+            f"{self._debug_edge_patch_prefix}_{sensor_id}_"
+            f"{self._debug_edge_patch_index:06d}_angle_{angle_deg:.1f}.png"
+        )
+
+        self._debug_edge_patch_dir.mkdir(parents=True, exist_ok=True)
+        path = self._debug_edge_patch_dir / filename
+        image_bgr = cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR)
+        if not cv2.imwrite(str(path), image_bgr):
+            raise OSError(f"Failed to save debug edge patch to {path}")
+        self._debug_edge_patch_index += 1
+
+    def _annotate_debug_edge_patch(
+        self,
+        rgb: np.ndarray,
+        edge: EdgeFeatures,
+    ) -> np.ndarray:
+        """Draw the edge tangent arrow and detector values on an RGB patch.
+
+        Returns:
+            RGB patch with edge angle, score, and geometry annotations.
+        """
+        annotated = rgb.copy()
+        height, width = annotated.shape[:2]
+
+        if edge.angle is not None:
+            center = np.array([width / 2.0, height / 2.0])
+            length = 0.6 * min(width, height)
+            direction = np.array([np.cos(edge.angle), np.sin(edge.angle)])
+            start = center - 0.5 * length * direction
+            end = center + 0.5 * length * direction
+            cv2.arrowedLine(
+                annotated,
+                tuple(np.round(start).astype(int)),
+                tuple(np.round(end).astype(int)),
+                (255, 255, 0),
+                2,
+                line_type=cv2.LINE_AA,
+                tipLength=0.25,
+            )
+
+        angle_text = (
+            "angle=nan"
+            if edge.angle is None
+            else f"angle={np.degrees(edge.angle):.1f}deg"
+        )
+        lines = [
+            angle_text,
+            f"strength={edge.strength:.3f}",
+            f"coherence={edge.coherence:.3f}",
+            f"geometric={str(edge.is_geometric_edge).lower()}",
+        ]
+        for row, text in enumerate(lines):
+            y = 14 + row * 14
+            cv2.putText(
+                annotated,
+                text,
+                (4, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.35,
+                (0, 0, 0),
+                2,
+                lineType=cv2.LINE_AA,
+            )
+            cv2.putText(
+                annotated,
+                text,
+                (4, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.35,
+                (255, 255, 255),
+                1,
+                lineType=cv2.LINE_AA,
+            )
+        return annotated
 
     def _update_tangent_frame(self, surface_normal_3d: np.ndarray) -> None:
         """Keep the local 2D frame aligned with the current surface normal."""

@@ -9,10 +9,13 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 from typing import Any, Callable
 from unittest.mock import Mock, sentinel
 
+import cv2
 import numpy as np
 import quaternion as qt
 
@@ -140,6 +143,8 @@ def make_2d_sm(
     edge_detector: Callable[..., EdgeFeatures] | None = None,
     noise_params: dict[str, Any] | None = None,
     delta_thresholds: dict[str, Any] | None = None,
+    debug_edge_patch_dir: str | Path | None = None,
+    debug_edge_patch_prefix: str = "edge_patch",
 ) -> TwoDSensorModule:
     if features is None:
         features = DEFAULT_FEATURES.copy()
@@ -153,6 +158,8 @@ def make_2d_sm(
         edge_detector=edge_detector,
         noise_params=noise_params,
         delta_thresholds=delta_thresholds,
+        debug_edge_patch_dir=debug_edge_patch_dir,
+        debug_edge_patch_prefix=debug_edge_patch_prefix,
     )
 
 
@@ -369,6 +376,148 @@ class TwoDSensorModuleEdgeTest(unittest.TestCase):
         assert msg.non_morphological_features["coherence"] == 0.75
 
         edge_detector.assert_called_once_with(observation)
+
+    def test_debug_edge_patch_not_saved_when_directory_is_not_set(self):
+        observation = make_raw_observation(
+            center_location=np.zeros(3),
+            semantic_id=1,
+        )
+        edge_detector = Mock(
+            return_value=EdgeFeatures(
+                angle=np.pi / 2,
+                strength=2.5,
+                coherence=0.75,
+                is_geometric_edge=False,
+                has_edge=True,
+            )
+        )
+        two_d_sm = make_2d_sm(edge_detector=edge_detector)
+        two_d_sm._update_tangent_frame(surface_normal_3d=SURFACE_NORMAL_3D)
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            two_d_sm._extract_2d_edge(make_message(), observation, SURFACE_NORMAL_3D)
+
+            assert list(Path(tempdir).glob("*.png")) == []
+
+    def test_debug_edge_patch_saved_for_detected_edge(self):
+        observation = make_raw_observation(
+            center_location=np.zeros(3),
+            semantic_id=1,
+        )
+        edge_detector = Mock(
+            return_value=EdgeFeatures(
+                angle=np.pi / 2,
+                strength=2.5,
+                coherence=0.75,
+                is_geometric_edge=False,
+                has_edge=True,
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            two_d_sm = make_2d_sm(
+                sensor_module_id="patch/0",
+                edge_detector=edge_detector,
+                debug_edge_patch_dir=tempdir,
+                debug_edge_patch_prefix="debug",
+            )
+            two_d_sm._update_tangent_frame(surface_normal_3d=SURFACE_NORMAL_3D)
+            raw_rgb = observation["rgba"][:, :, :3]
+
+            two_d_sm._extract_2d_edge(make_message(), observation, SURFACE_NORMAL_3D)
+
+            saved_paths = list(Path(tempdir).glob("*.png"))
+            assert len(saved_paths) == 1
+            assert saved_paths[0].name == "debug_patch_0_000000_angle_90.0.png"
+            saved_bgr = cv2.imread(str(saved_paths[0]), cv2.IMREAD_COLOR)
+            assert saved_bgr is not None
+            saved_rgb = cv2.cvtColor(saved_bgr, cv2.COLOR_BGR2RGB)
+            assert saved_rgb.shape == raw_rgb.shape
+            assert not np.array_equal(saved_rgb, raw_rgb)
+            assert np.count_nonzero(saved_rgb != raw_rgb) > 0
+
+    def test_debug_edge_patch_saved_for_geometric_edge_before_rejection(self):
+        observation = make_raw_observation(
+            center_location=np.zeros(3),
+            semantic_id=1,
+        )
+        edge_detector = Mock(
+            return_value=EdgeFeatures(
+                angle=np.pi / 2,
+                strength=2.5,
+                coherence=0.75,
+                is_geometric_edge=True,
+                has_edge=True,
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            two_d_sm = make_2d_sm(
+                edge_detector=edge_detector,
+                debug_edge_patch_dir=tempdir,
+            )
+            two_d_sm._update_tangent_frame(surface_normal_3d=SURFACE_NORMAL_3D)
+            percept = make_message()
+            original_pose = percept.morphological_features["pose_vectors"].copy()
+
+            msg = two_d_sm._extract_2d_edge(percept, observation, SURFACE_NORMAL_3D)
+
+            assert len(list(Path(tempdir).glob("*.png"))) == 1
+            assert msg.morphological_features["pose_fully_defined"] is False
+            np.testing.assert_allclose(
+                msg.morphological_features["pose_vectors"], original_pose
+            )
+
+    def test_debug_edge_patch_not_saved_without_edge(self):
+        observation = make_raw_observation(
+            center_location=np.zeros(3),
+            semantic_id=1,
+        )
+        edge_detector = Mock(return_value=make_no_edge())
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            two_d_sm = make_2d_sm(
+                edge_detector=edge_detector,
+                debug_edge_patch_dir=tempdir,
+            )
+            two_d_sm._update_tangent_frame(surface_normal_3d=SURFACE_NORMAL_3D)
+
+            two_d_sm._extract_2d_edge(make_message(), observation, SURFACE_NORMAL_3D)
+
+            assert list(Path(tempdir).glob("*.png")) == []
+
+    def test_debug_edge_patch_counter_resets_per_episode(self):
+        observation = make_raw_observation(
+            center_location=np.zeros(3),
+            semantic_id=1,
+        )
+        edge_detector = Mock(
+            return_value=EdgeFeatures(
+                angle=np.pi / 4,
+                strength=2.5,
+                coherence=0.75,
+                is_geometric_edge=False,
+                has_edge=True,
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            two_d_sm = make_2d_sm(
+                edge_detector=edge_detector,
+                debug_edge_patch_dir=tempdir,
+            )
+            two_d_sm._update_tangent_frame(surface_normal_3d=SURFACE_NORMAL_3D)
+
+            two_d_sm._extract_2d_edge(make_message(), observation, SURFACE_NORMAL_3D)
+            first_episode_paths = sorted(Path(tempdir).glob("*.png"))
+            two_d_sm.pre_episode()
+            two_d_sm._update_tangent_frame(surface_normal_3d=SURFACE_NORMAL_3D)
+            two_d_sm._extract_2d_edge(make_message(), observation, SURFACE_NORMAL_3D)
+
+            second_episode_paths = sorted(Path(tempdir).glob("*.png"))
+            assert len(first_episode_paths) == 1
+            assert len(second_episode_paths) == 1
+            assert second_episode_paths[0].name.endswith("_000000_angle_45.0.png")
 
     def test_world_edge_tangent_is_accepted_and_enables_edge_detection(self):
         features = [
