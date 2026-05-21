@@ -211,6 +211,28 @@ def _compute_gaze_directions(action_sequence, n_steps):
     return directions
 
 
+def _apply_gaze_projection(data, hit_points, hit_mask, sensor_positions):
+    """Apply successful gaze hits to 2D episode data.
+
+    If all rays miss, keep the original 2D locations so the visualizer can still
+    show the logged trajectory instead of crashing on an empty point cloud.
+    """
+    n_hits = int(hit_mask.sum())
+    if n_hits == 0:
+        return sensor_positions, n_hits
+
+    data.locations = hit_points[hit_mask]
+    for key in data.features:
+        data.features[key] = data.features[key][hit_mask]
+    if data.stepwise_targets:
+        hit_indices = np.where(hit_mask)[0]
+        data.stepwise_targets = [data.stepwise_targets[i] for i in hit_indices]
+    sensor_positions = sensor_positions[hit_mask]
+    data.n_steps = n_hits
+
+    return sensor_positions, n_hits
+
+
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
@@ -695,7 +717,7 @@ class TrainingStepVisualizer:
 # CLI
 # ---------------------------------------------------------------------------
 
-DEFAULT_MESH_DIR = "~/tbp/data/compositional_objects/meshes"
+DEFAULT_MESH_DIR = "~/tbp/data/compositional_objects_1.1/meshes"
 
 
 def main():
@@ -803,15 +825,11 @@ def main():
             n_hits = int(hit_mask.sum())
             print(f"Gaze raycast: {n_hits}/{data.n_steps} hits")
 
-            # Filter all per-step arrays to keep only hits
-            data.locations = hit_points[hit_mask]
-            for key in data.features:
-                data.features[key] = data.features[key][hit_mask]
-            if data.stepwise_targets:
-                hit_indices = np.where(hit_mask)[0]
-                data.stepwise_targets = [data.stepwise_targets[i] for i in hit_indices]
-            sensor_positions = sensor_positions[hit_mask]
-            data.n_steps = n_hits
+            sensor_positions, _n_hits = _apply_gaze_projection(
+                data, hit_points, hit_mask, sensor_positions
+            )
+            if _n_hits == 0:
+                print("Warning: keeping original 2D points because all gaze rays missed")
         else:
             reasons = []
             if tri_geom is None:
