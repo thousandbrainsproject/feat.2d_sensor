@@ -435,6 +435,10 @@ class TwoDSensorModuleEdgeTest(unittest.TestCase):
             assert saved_rgb.shape == raw_rgb.shape
             assert not np.array_equal(saved_rgb, raw_rgb)
             assert np.count_nonzero(saved_rgb != raw_rgb) > 0
+            text_region = saved_rgb[:22, :, :]
+            removed_text_region = saved_rgb[22:58, :16, :]
+            assert np.count_nonzero(text_region != raw_rgb[:22, :, :]) > 0
+            assert np.count_nonzero(removed_text_region != raw_rgb[22:58, :16, :]) == 0
 
     def test_debug_edge_patch_saved_for_geometric_edge_before_rejection(self):
         observation = make_raw_observation(

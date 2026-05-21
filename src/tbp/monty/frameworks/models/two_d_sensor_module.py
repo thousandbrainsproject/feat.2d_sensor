@@ -352,10 +352,10 @@ class TwoDSensorModule(SensorModule):
         rgb: np.ndarray,
         edge: EdgeFeatures,
     ) -> np.ndarray:
-        """Draw the edge tangent arrow and detector values on an RGB patch.
+        """Draw the edge tangent arrow and angle value on an RGB patch.
 
         Returns:
-            RGB patch with edge angle, score, and geometry annotations.
+            RGB patch with edge angle annotation.
         """
         annotated = rgb.copy()
         height, width = annotated.shape[:2]
@@ -381,34 +381,26 @@ class TwoDSensorModule(SensorModule):
             if edge.angle is None
             else f"angle={np.degrees(edge.angle):.1f}deg"
         )
-        lines = [
+        cv2.putText(
+            annotated,
             angle_text,
-            f"strength={edge.strength:.3f}",
-            f"coherence={edge.coherence:.3f}",
-            f"geometric={str(edge.is_geometric_edge).lower()}",
-        ]
-        for row, text in enumerate(lines):
-            y = 14 + row * 14
-            cv2.putText(
-                annotated,
-                text,
-                (4, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.35,
-                (0, 0, 0),
-                2,
-                lineType=cv2.LINE_AA,
-            )
-            cv2.putText(
-                annotated,
-                text,
-                (4, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.35,
-                (255, 255, 255),
-                1,
-                lineType=cv2.LINE_AA,
-            )
+            (4, 14),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            (0, 0, 0),
+            2,
+            lineType=cv2.LINE_AA,
+        )
+        cv2.putText(
+            annotated,
+            angle_text,
+            (4, 14),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            (255, 255, 255),
+            1,
+            lineType=cv2.LINE_AA,
+        )
         return annotated
 
     def _update_tangent_frame(self, surface_normal_3d: np.ndarray) -> None:
