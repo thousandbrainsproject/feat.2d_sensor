@@ -32,7 +32,7 @@ experiment:
     supervised_lm_ids: all
     logging:
       run_name: logos_v1.1_2d_detailed
-      output_dir: ${path.expanduser:${oc.env:MONTY_MODELS}/2d_sensor/logos_v1.1_2d_detailed}
+      output_dir: ${path.expanduser:${oc.env:MONTY_MODELS}/2d_sensor}
     environment:
       env_init_args:
         data_path: ${path.expanduser:${oc.env:MONTY_DATA}/compositional_objects_1.1}
