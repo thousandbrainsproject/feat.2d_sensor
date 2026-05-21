@@ -126,7 +126,8 @@ class TwoDSensorModule(SensorModule):
         self._snapshot_telemetry = SnapshotTelemetry()
 
         self._extract_edges = any(
-            feature in features for feature in ("edge_strength", "coherence")
+            feature in features
+            for feature in ("edge_strength", "coherence", "world_edge_tangent")
         )
         if self._extract_edges and edge_detector is None:
             edge_detector = EdgeDetector()
@@ -288,6 +289,11 @@ class TwoDSensorModule(SensorModule):
         state.morphological_features["pose_vectors"] = pose_2d
         state.morphological_features["pose_fully_defined"] = True
 
+        if "world_edge_tangent" in self.features:
+            du, dv, _ = pose_2d[1]
+            state.non_morphological_features["world_edge_tangent"] = normalize(
+                du * self._tangent_frame.basis_u + dv * self._tangent_frame.basis_v
+            )
         if "edge_strength" in self.features:
             state.non_morphological_features["edge_strength"] = edge.strength
         if "coherence" in self.features:

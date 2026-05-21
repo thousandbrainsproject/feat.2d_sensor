@@ -370,6 +370,51 @@ class TwoDSensorModuleEdgeTest(unittest.TestCase):
 
         edge_detector.assert_called_once_with(observation)
 
+    def test_world_edge_tangent_is_accepted_and_enables_edge_detection(self):
+        features = [
+            feature
+            for feature in DEFAULT_FEATURES
+            if feature not in {"edge_strength", "coherence"}
+        ]
+        features.append("world_edge_tangent")
+
+        two_d_sm = TwoDSensorModule(
+            sensor_module_id="test",
+            features=features,
+        )
+
+        assert two_d_sm.edge_detector is not None
+
+    def test_extract_2d_edge_stores_world_edge_tangent_when_requested(self):
+        observation = make_raw_observation(
+            center_location=np.zeros(3),
+            semantic_id=1,
+        )
+        edge_detector = Mock(
+            return_value=EdgeFeatures(
+                angle=np.pi / 2,
+                strength=2.5,
+                coherence=0.75,
+                is_geometric_edge=False,
+                has_edge=True,
+            )
+        )
+        features = DEFAULT_FEATURES.copy()
+        features.append("world_edge_tangent")
+        two_d_sm = make_2d_sm(features=features, edge_detector=edge_detector)
+        two_d_sm._update_tangent_frame(surface_normal_3d=SURFACE_NORMAL_3D)
+        percept = make_message()
+
+        msg = two_d_sm._extract_2d_edge(
+            percept, observation, surface_normal_3d=SURFACE_NORMAL_3D
+        )
+
+        np.testing.assert_allclose(
+            msg.non_morphological_features["world_edge_tangent"],
+            np.array([0.0, -1.0, 0.0]),
+            atol=DEFAULT_TOLERANCE,
+        )
+
     def test_extract_2d_edge_ignores_no_edge(self):
         observation = make_raw_observation(
             center_location=np.zeros(3),
@@ -387,6 +432,22 @@ class TwoDSensorModuleEdgeTest(unittest.TestCase):
         np.testing.assert_allclose(
             msg.morphological_features["pose_vectors"], original_pose
         )
+
+    def test_extract_2d_edge_does_not_store_world_tangent_without_edge(self):
+        observation = make_raw_observation(
+            center_location=np.zeros(3),
+            semantic_id=1,
+        )
+        edge_detector = Mock(return_value=make_no_edge())
+        features = DEFAULT_FEATURES.copy()
+        features.append("world_edge_tangent")
+        two_d_sm = make_2d_sm(features=features, edge_detector=edge_detector)
+        two_d_sm._update_tangent_frame(surface_normal_3d=SURFACE_NORMAL_3D)
+        percept = make_message()
+
+        msg = two_d_sm._extract_2d_edge(percept, observation, SURFACE_NORMAL_3D)
+
+        assert "world_edge_tangent" not in msg.non_morphological_features
 
     def test_extract_2d_edge_ignores_geometric_edge(self):
         observation = make_raw_observation(
@@ -415,6 +476,31 @@ class TwoDSensorModuleEdgeTest(unittest.TestCase):
         )
         assert "edge_strength" not in msg.non_morphological_features
         assert "coherence" not in msg.non_morphological_features
+        assert "world_edge_tangent" not in msg.non_morphological_features
+
+    def test_extract_2d_edge_does_not_store_world_tangent_for_geometric_edge(self):
+        observation = make_raw_observation(
+            center_location=np.zeros(3),
+            semantic_id=1,
+        )
+        edge_detector = Mock(
+            return_value=EdgeFeatures(
+                angle=np.pi / 2,
+                strength=2.5,
+                coherence=0.75,
+                is_geometric_edge=True,
+                has_edge=True,
+            )
+        )
+        features = DEFAULT_FEATURES.copy()
+        features.append("world_edge_tangent")
+        two_d_sm = make_2d_sm(features=features, edge_detector=edge_detector)
+        two_d_sm._update_tangent_frame(surface_normal_3d=SURFACE_NORMAL_3D)
+        percept = make_message()
+
+        msg = two_d_sm._extract_2d_edge(percept, observation, SURFACE_NORMAL_3D)
+
+        assert "world_edge_tangent" not in msg.non_morphological_features
 
 
 class TwoDSensorModuleTangentFrameTest(unittest.TestCase):

@@ -8,7 +8,9 @@
 # https://opensource.org/licenses/MIT.
 
 from dataclasses import fields
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from sandbox import visualize_learned_model as viz
@@ -69,6 +71,82 @@ def test_visualization_config_has_no_scaled_edge_arrow_setting():
     assert "show_unscaled_edge_lines" not in config_fields
 
 
+def model_data_with_features(features):
+    return {
+        "points": np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ]
+        ),
+        "features": features,
+    }
+
+
+def edge_features():
+    return {
+        "edge_strength": np.array([1.0, 1.0]),
+        "coherence": np.array([1.0, 1.0]),
+    }
+
+
+def pose_vectors_feature():
+    return np.array(
+        [
+            [
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            [
+                [0.0, 0.0, 1.0],
+                [0.0, 1.0, 0.0],
+                [-1.0, 0.0, 0.0],
+            ],
+        ]
+    )
+
+
+def test_prepare_model_view_extracts_world_edge_tangent():
+    """World edge tangents are loaded as a first-class vector field."""
+    features = edge_features()
+    features["pose_vectors"] = pose_vectors_feature()
+    features["world_edge_tangent"] = np.array(
+        [
+            [0.0, -2.0, 0.0],
+            [3.0, 0.0, 0.0],
+        ]
+    )
+
+    view = viz.prepare_model_view(model_data_with_features(features))
+
+    assert view.has_edges
+    assert view.has_world_edge_tangents
+    np.testing.assert_allclose(
+        view.world_edge_tangents,
+        np.array(
+            [
+                [0.0, -1.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ]
+        ),
+    )
+
+
+def test_prepare_model_view_skips_invalid_world_edge_tangent(capsys):
+    """Invalid world tangent arrays warn and leave local tangent fallback intact."""
+    features = edge_features()
+    features["pose_vectors"] = pose_vectors_feature()
+    features["world_edge_tangent"] = np.array([1.0, 0.0, 0.0])
+
+    view = viz.prepare_model_view(model_data_with_features(features))
+
+    captured = capsys.readouterr()
+    assert "world_edge_tangent" in captured.out
+    assert view.world_edge_tangents is None
+    assert view.has_edges
+
+
 def test_control_specs_show_reference_edges_and_reset_camera():
     """Controls expose edge filtering, fixed edge lines, normals, and camera reset."""
     visualizer = object.__new__(viz.LearnedModelVisualizer)
@@ -82,6 +160,68 @@ def test_control_specs_show_reference_edges_and_reset_camera():
     assert "_reset_camera" in callbacks
     assert labels["unscaled_edges"] == (" Edges Off ", " Edges On ")
     assert labels["_reset_camera"] == (" Reset Camera ", " Reset Camera ")
+
+
+def test_control_specs_include_tangent_space_toggle_when_both_sources_exist():
+    """The tangent-space toggle is only enabled when local and world tangents exist."""
+    visualizer = object.__new__(viz.LearnedModelVisualizer)
+    visualizer.view = SimpleNamespace(
+        has_local_edge_tangents=True,
+        has_world_edge_tangents=True,
+    )
+
+    specs = visualizer._control_specs()
+    labels = {spec.callback_name: (spec.label_off, spec.label_on) for spec in specs}
+
+    assert labels["edge_vector_space"] == (" World Edges ", " Local Edges ")
+
+
+def test_tangent_space_toggle_requires_local_and_world_tangents():
+    """The tangent-space control is disabled unless both sources exist."""
+    visualizer = object.__new__(viz.LearnedModelVisualizer)
+    visualizer.view = SimpleNamespace(
+        has_local_edge_tangents=True,
+        has_world_edge_tangents=False,
+    )
+    spec = next(
+        spec
+        for spec in visualizer._control_specs()
+        if spec.callback_name == "edge_vector_space"
+    )
+
+    assert spec.enabled(visualizer) is False
+
+
+def test_default_edge_vector_mode_prefers_world_tangents():
+    """World tangents are the default edge vector source when available."""
+    features = edge_features()
+    features["pose_vectors"] = pose_vectors_feature()
+    features["world_edge_tangent"] = np.array(
+        [
+            [0.0, -1.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ]
+    )
+    view = viz.prepare_model_view(model_data_with_features(features))
+    visualizer = object.__new__(viz.LearnedModelVisualizer)
+    visualizer.view = view
+
+    visualizer._set_default_edge_vector_space()
+
+    assert visualizer.edge_vector_space == "world"
+
+
+def test_default_edge_vector_mode_falls_back_to_local_tangents():
+    """Older checkpoints keep drawing local pose-vector tangents."""
+    features = edge_features()
+    features["pose_vectors"] = pose_vectors_feature()
+    view = viz.prepare_model_view(model_data_with_features(features))
+    visualizer = object.__new__(viz.LearnedModelVisualizer)
+    visualizer.view = view
+
+    visualizer._set_default_edge_vector_space()
+
+    assert visualizer.edge_vector_space == "local"
 
 
 def test_control_positions_are_horizontal():

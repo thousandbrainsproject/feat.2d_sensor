@@ -73,6 +73,7 @@ class PreparedModelView:
     colors: np.ndarray
     normals: np.ndarray | None
     tangents: np.ndarray | None
+    world_edge_tangents: np.ndarray | None
     edge_mask: np.ndarray | None
     bounds_min: np.ndarray
     bounds_max: np.ndarray
@@ -81,7 +82,19 @@ class PreparedModelView:
     @property
     def has_edges(self) -> bool:
         """Whether the view has enough data to render edge tangent overlays."""
-        return self.tangents is not None and self.edge_mask is not None
+        return (
+            self.has_local_edge_tangents or self.has_world_edge_tangents
+        ) and self.edge_mask is not None
+
+    @property
+    def has_local_edge_tangents(self) -> bool:
+        """Whether local 2D pose-vector tangents are available."""
+        return self.tangents is not None
+
+    @property
+    def has_world_edge_tangents(self) -> bool:
+        """Whether world-coordinate edge tangents are available."""
+        return self.world_edge_tangents is not None
 
     @property
     def has_normals(self) -> bool:
@@ -140,6 +153,22 @@ def _extract_pose_vectors(
         return None, None
 
     return pose_vectors[:, 0, :], pose_vectors[:, 1, :]
+
+
+def _extract_world_edge_tangents(features: dict) -> np.ndarray | None:
+    """Extract normalized world-space edge tangents when present."""
+    if "world_edge_tangent" not in features:
+        return None
+
+    world_tangents = np.asarray(features["world_edge_tangent"], dtype=float)
+    if world_tangents.ndim != 2 or world_tangents.shape[1] != 3:
+        print(
+            "[viz] Warning: expected world_edge_tangent with shape (N, 3), "
+            f"got {world_tangents.shape}; skipping world edge overlays."
+        )
+        return None
+
+    return normalize_rows_safe(world_tangents)
 
 
 def _compute_rgba_colors(features: dict, n_points: int) -> np.ndarray:
@@ -211,6 +240,7 @@ def prepare_model_view(
 
     colors = _compute_rgba_colors(features, len(points))
     normals, tangents = _extract_pose_vectors(features)
+    world_edge_tangents = _extract_world_edge_tangents(features)
     edge_mask = _compute_edge_mask(features, len(points), config)
 
     bounds_min = points.min(axis=0)
@@ -227,6 +257,7 @@ def prepare_model_view(
         colors=colors,
         normals=normals,
         tangents=tangents,
+        world_edge_tangents=world_edge_tangents,
         edge_mask=edge_mask,
         bounds_min=bounds_min,
         bounds_max=bounds_max,
@@ -315,6 +346,7 @@ class VectorLineLayer(Layer):
         line_width_getter: Callable[[VisualizationConfig], int],
         scale_getter: Callable[[PreparedModelView, VisualizationConfig], np.ndarray],
         mask_getter: Callable[[PreparedModelView], np.ndarray | None],
+        vector_getter: Callable[[PreparedModelView], np.ndarray | None] | None = None,
         visible: bool = True,
     ) -> None:
         super().__init__(visible=visible)
@@ -323,8 +355,11 @@ class VectorLineLayer(Layer):
         self.line_width_getter = line_width_getter
         self.scale_getter = scale_getter
         self.mask_getter = mask_getter
+        self.vector_getter = vector_getter
 
     def _vectors_for_view(self, view: PreparedModelView) -> np.ndarray | None:
+        if self.vector_getter is not None:
+            return self.vector_getter(view)
         if self.vector_name == "tangents":
             return view.tangents
         if self.vector_name == "normals":
@@ -390,14 +425,16 @@ class LearnedModelVisualizer:
         self.plotter = Plotter(size=config.window_size, title=self.title)
         self.initial_camera = compute_camera(self.view)
         self.show_edge_only = False
+        self._set_default_edge_vector_space()
         self.layers = {
             "points": PointCloudLayer(visible=True),
             "unscaled_edges": VectorLineLayer(
-                vector_name="tangents",
+                vector_name="edge_tangents",
                 color=(200, 0, 0),
                 line_width_getter=lambda cfg: cfg.tangent_line_width,
                 scale_getter=self._unscaled_edge_lengths,
                 mask_getter=lambda view: view.edge_mask,
+                vector_getter=self._edge_vectors_for_view,
                 visible=view.has_edges,
             ),
             "normals": VectorLineLayer(
@@ -418,6 +455,23 @@ class LearnedModelVisualizer:
                 return np.arange(len(self.view.points))
             return edge_indices
         return np.arange(len(self.view.points))
+
+    def _set_default_edge_vector_space(self) -> None:
+        """Prefer world tangents when checkpoints include them."""
+        if self.view.has_world_edge_tangents:
+            self.edge_vector_space = "world"
+        else:
+            self.edge_vector_space = "local"
+
+    def _edge_vectors_for_view(self, view: PreparedModelView) -> np.ndarray | None:
+        """Return the active edge tangent vector source with graceful fallback."""
+        if self.edge_vector_space == "world":
+            if view.world_edge_tangents is not None:
+                return view.world_edge_tangents
+            return view.tangents
+        if view.tangents is not None:
+            return view.tangents
+        return view.world_edge_tangents
 
     def _unscaled_edge_lengths(
         self, view: PreparedModelView, config: VisualizationConfig
@@ -454,6 +508,14 @@ class LearnedModelVisualizer:
         button.switch()
         self.redraw()
 
+    def _toggle_edge_vector_space(self, button, _event) -> None:
+        self.edge_vector_space = (
+            "local" if self.edge_vector_space == "world" else "world"
+        )
+        button.switch()
+        print(f"[viz] Showing {self.edge_vector_space} edge tangents")
+        self.redraw()
+
     def _reset_camera(self, _button=None, _event=None) -> None:
         """Restore the initial screenshot-friendly camera view."""
         camera = getattr(self.plotter, "camera", None)
@@ -484,6 +546,16 @@ class LearnedModelVisualizer:
                 callback_name="unscaled_edges",
                 enabled=lambda viz: viz.view.has_edges,
                 active=lambda viz: viz.layers["unscaled_edges"].visible,
+            ),
+            ControlSpec(
+                label_off=" World Edges ",
+                label_on=" Local Edges ",
+                callback_name="edge_vector_space",
+                enabled=lambda viz: (
+                    viz.view.has_local_edge_tangents
+                    and viz.view.has_world_edge_tangents
+                ),
+                active=lambda viz: viz.edge_vector_space == "local",
             ),
             ControlSpec(
                 label_off=" Normals Off ",
@@ -523,6 +595,8 @@ class LearnedModelVisualizer:
                 callback = self._toggle_edge_filter
             elif spec.callback_name == "_reset_camera":
                 callback = self._reset_camera
+            elif spec.callback_name == "edge_vector_space":
+                callback = self._toggle_edge_vector_space
             else:
 
                 def callback(button, event, layer_name=spec.callback_name):

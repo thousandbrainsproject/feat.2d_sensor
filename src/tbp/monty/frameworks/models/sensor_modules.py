@@ -145,6 +145,7 @@ class ObservationProcessor:
         "coords_for_TM",
         "edge_strength",
         "coherence",
+        "world_edge_tangent",
     ]
 
     def __init__(
