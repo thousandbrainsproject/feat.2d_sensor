@@ -91,6 +91,7 @@ class TwoDSensorModule(SensorModule):
         delta_thresholds: dict[str, Any] | None = None,
         debug_edge_patch_dir: str | Path | None = None,
         debug_edge_patch_prefix: str = "edge_patch",
+        debug_surface_normal_override: list[float] | np.ndarray | None = None,
     ):
         """Initialize 2D Sensor Module.
 
@@ -113,6 +114,13 @@ class TwoDSensorModule(SensorModule):
             debug_edge_patch_dir: Optional directory where detected-edge RGB patches
                 are saved with debug arrow annotations. Defaults to None.
             debug_edge_patch_prefix: File prefix used for debug edge patch PNGs.
+            debug_surface_normal_override: Optional 3D surface normal used instead
+                of the observed curvature normal when building the 2D tangent frame.
+                This is intended only for debugging known planar scenes.
+
+        Raises:
+            ValueError: If debug_surface_normal_override is not a 3D vector or
+                cannot be normalized.
         """
         self._observation_processor = ObservationProcessor(
             features=features,
@@ -157,6 +165,13 @@ class TwoDSensorModule(SensorModule):
         )
         self._debug_edge_patch_prefix = debug_edge_patch_prefix
         self._debug_edge_patch_index = 0
+        if debug_surface_normal_override is None:
+            self._debug_surface_normal_override = None
+        else:
+            override = np.asarray(debug_surface_normal_override, dtype=float)
+            if override.shape != (3,):
+                raise ValueError("debug_surface_normal_override must be a 3D vector")
+            self._debug_surface_normal_override = normalize(override)
 
     def pre_episode(self) -> None:
         self._snapshot_telemetry.reset()
@@ -213,6 +228,19 @@ class TwoDSensorModule(SensorModule):
         else:
             curvature_pose_vectors = None
             true_surface_normal = None
+        # A debug override can intentionally disagree with the curvature pose.
+        # Skip curvature arc correction in that mode because its principal
+        # directions no longer define the tangent plane used below.
+        pose_vectors_for_2d_displacement = (
+            None
+            if self._debug_surface_normal_override is not None
+            else curvature_pose_vectors
+        )
+        surface_normal_2d = (
+            None
+            if true_surface_normal is None
+            else self._surface_normal_for_2d_frame(true_surface_normal)
+        )
 
         # Only edges define pose for 2D sensor; reset curvature-based flag.
         observed_state.morphological_features["pose_fully_defined"] = False
@@ -220,14 +248,14 @@ class TwoDSensorModule(SensorModule):
         if (
             observed_state.use_state
             and observed_state.get_on_object()
-            and true_surface_normal is not None
+            and surface_normal_2d is not None
         ):
-            self._update_tangent_frame(true_surface_normal)
+            self._update_tangent_frame(surface_normal_2d)
             if self._extract_edges:
                 observed_state = self._extract_2d_edge(
                     observed_state,
                     observation,
-                    true_surface_normal,
+                    surface_normal_2d,
                 )
 
         # Replace 3D curvature pose with flat 2D basis when no edge was detected
@@ -248,7 +276,7 @@ class TwoDSensorModule(SensorModule):
             observed_state.use_state = False
 
         observed_state = self._update_2d_position_and_displacement(
-            observed_state, curvature_pose_vectors, true_surface_normal
+            observed_state, pose_vectors_for_2d_displacement, surface_normal_2d
         )
 
         observed_state = self._percept_filter(observed_state)
@@ -317,6 +345,12 @@ class TwoDSensorModule(SensorModule):
             state.non_morphological_features["coherence"] = edge.coherence
 
         return state
+
+    def _surface_normal_for_2d_frame(self, estimated_normal: np.ndarray) -> np.ndarray:
+        """Return the normal used for 2D tangent-frame debug calculations."""
+        if self._debug_surface_normal_override is None:
+            return estimated_normal
+        return self._debug_surface_normal_override
 
     def _save_debug_edge_patch(
         self,
