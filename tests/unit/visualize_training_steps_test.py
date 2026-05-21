@@ -12,6 +12,20 @@ import numpy as np
 from sandbox import visualize_training_steps as viz
 
 
+def test_texture_image_for_vedo_flips_image_vertically():
+    texture = np.array(
+        [
+            [[1, 0, 0], [2, 0, 0]],
+            [[3, 0, 0], [4, 0, 0]],
+        ],
+        dtype=np.uint8,
+    )
+
+    image = viz._texture_image_for_vedo(texture)
+
+    np.testing.assert_array_equal(image[:, :, 0], [[3, 4], [1, 2]])
+
+
 def test_default_mesh_dir_uses_compositional_objects_v1_1():
     """Logo learning configs train on compositional_objects_1.1 meshes."""
     assert viz.DEFAULT_MESH_DIR.endswith("compositional_objects_1.1/meshes")

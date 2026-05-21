@@ -93,6 +93,11 @@ def binary_to_rgb(values):
     return colors
 
 
+def _texture_image_for_vedo(texture):
+    """Convert a GLB texture image to Vedo's texture image orientation."""
+    return np.flipud(np.asarray(texture))
+
+
 def _raycast_closest(origins, directions, vertices, faces):
     """Closest ray-mesh intersections via Moller-Trumbore.
 
@@ -430,7 +435,7 @@ def load_object_mesh(object_name, mesh_dir, object_rotation, alpha=1.0):
     )
     if has_texture:
         mesh.texture(
-            tname=np.array(geom.visual.material.baseColorTexture),
+            tname=_texture_image_for_vedo(geom.visual.material.baseColorTexture),
             tcoords=geom.visual.uv,
         )
     else:
