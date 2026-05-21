@@ -67,6 +67,8 @@ experiment:
     monty_config:
       sensor_modules:
         sensor_module_0:
+          debug_edge_patch_dir: ${oc.env:MONTY_MODELS}/2d_sensor/${experiment.config.logging.run_name}/debug_edge_patches
+          debug_edge_patch_prefix: logos_edge_patch
           features:
             - pose_vectors
             - pose_fully_defined
