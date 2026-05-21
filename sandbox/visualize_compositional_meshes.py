@@ -29,7 +29,7 @@ from vedo import Mesh, Plotter, Text2D, Text3D  # noqa: E402
 DEFAULT_MESH_DIR = Path("/Users/hlee/tbp/data/compositional_objects_1.1/meshes")
 DEFAULT_WINDOW_SIZE = (1600, 1000)
 TEXTURED_MESH_FILE = "textured.glb"
-MESH_COLORS = {
+FAMILY_COLORS = {
     "cube": (0.00, 0.45, 0.85),
     "disk": (0.85, 0.15, 0.65),
     "cylinder": (0.10, 0.55, 0.28),
@@ -37,6 +37,20 @@ MESH_COLORS = {
     "logo": (0.45, 0.20, 0.75),
     "mug": (0.85, 0.25, 0.15),
 }
+OBJECT_COLORS = (
+    (0.00, 0.45, 0.85),
+    (0.85, 0.15, 0.65),
+    (0.10, 0.55, 0.28),
+    (0.95, 0.65, 0.10),
+    (0.45, 0.20, 0.75),
+    (0.85, 0.25, 0.15),
+    (0.00, 0.62, 0.62),
+    (0.55, 0.38, 0.15),
+    (0.55, 0.60, 0.05),
+    (0.15, 0.35, 0.95),
+    (0.90, 0.40, 0.05),
+    (0.35, 0.35, 0.35),
+)
 
 
 @dataclass(frozen=True)
@@ -88,13 +102,43 @@ def _load_trimesh_geometry(path: Path) -> trimesh.Trimesh:
     return geometry
 
 
-def _color_for_name(name: str) -> tuple[float, float, float]:
+def _color_for_name(name: str, color_mode: str) -> tuple[float, float, float]:
     """Choose a stable display color from the object name."""
     lowered = name.lower()
-    for key, color in MESH_COLORS.items():
+    if color_mode == "object":
+        prefix = name.split("_", maxsplit=1)[0]
+        if prefix.isdigit():
+            return OBJECT_COLORS[(int(prefix) - 1) % len(OBJECT_COLORS)]
+        return OBJECT_COLORS[sum(ord(char) for char in name) % len(OBJECT_COLORS)]
+
+    for key, color in FAMILY_COLORS.items():
         if key in lowered:
             return color
     return (0.68, 0.85, 0.90)
+
+
+def _apply_mesh_appearance(
+    mesh: Mesh,
+    geometry: trimesh.Trimesh,
+    *,
+    record_name: str,
+    color_mode: str,
+    alpha: float,
+) -> None:
+    """Apply either GLB texture/RGB data or an artificial debug color."""
+    if color_mode == "texture":
+        visual = getattr(geometry, "visual", None)
+        material = getattr(visual, "material", None)
+        texture = getattr(material, "baseColorTexture", None)
+        uv = getattr(visual, "uv", None)
+        if texture is not None and uv is not None:
+            mesh.texture(tname=np.array(texture), tcoords=np.asarray(uv))
+            mesh.alpha(alpha)
+            return
+        print(f"[mesh] No texture found for {record_name}; using object color")
+        color_mode = "object"
+
+    mesh.color(_color_for_name(record_name, color_mode), alpha=alpha)
 
 
 def _center_scale_and_place_mesh(
@@ -134,6 +178,7 @@ def build_vedo_mesh(
     cell_size: float,
     normalize: bool,
     alpha: float,
+    color_mode: str,
 ) -> Mesh:
     """Create a Vedo mesh actor from one GLB via trimesh."""
     geometry = _load_trimesh_geometry(record.path)
@@ -146,7 +191,13 @@ def build_vedo_mesh(
         cell_size=cell_size,
         normalize=normalize,
     )
-    mesh.color(_color_for_name(record.name), alpha=alpha)
+    _apply_mesh_appearance(
+        mesh,
+        geometry,
+        record_name=record.name,
+        color_mode=color_mode,
+        alpha=alpha,
+    )
     mesh.name = record.name
     return mesh
 
@@ -179,6 +230,7 @@ def build_scene_actors(
     columns: int,
     normalize: bool,
     alpha: float,
+    color_mode: str,
     cell_spacing: float,
 ) -> list[object]:
     """Build mesh and label actors arranged in a regular grid."""
@@ -196,6 +248,7 @@ def build_scene_actors(
                 cell_size=cell_size,
                 normalize=normalize,
                 alpha=alpha,
+                color_mode=color_mode,
             )
         )
         actors.append(build_label(record, center=center, cell_size=cell_size))
@@ -217,6 +270,7 @@ def show_meshes(
     columns: int,
     normalize: bool,
     alpha: float,
+    color_mode: str,
 ) -> None:
     """Open an interactive Vedo plotter."""
     actors = build_scene_actors(
@@ -224,6 +278,7 @@ def show_meshes(
         columns=columns,
         normalize=normalize,
         alpha=alpha,
+        color_mode=color_mode,
         cell_spacing=1.6,
     )
     summary = summarize_selection(records, page=page, total=total)
@@ -292,6 +347,12 @@ def parse_args() -> argparse.Namespace:
         default=1.0,
         help="Mesh opacity from 0 to 1.",
     )
+    parser.add_argument(
+        "--color-mode",
+        choices=("texture", "object", "family"),
+        default="texture",
+        help="Use GLB texture/RGB data, per-object debug colors, or family colors.",
+    )
     return parser.parse_args()
 
 
@@ -337,6 +398,7 @@ def main() -> None:
         columns=args.columns,
         normalize=not args.preserve_scale,
         alpha=max(0.0, min(1.0, args.alpha)),
+        color_mode=args.color_mode,
     )
 
 
