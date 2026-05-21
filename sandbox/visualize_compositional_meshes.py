@@ -22,7 +22,7 @@ from pathlib import Path
 os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "matplotlib"))
 
 import numpy as np  # noqa: E402
-import vtk  # noqa: E402
+import trimesh  # noqa: E402
 from vedo import Mesh, Plotter, Text2D, Text3D  # noqa: E402
 
 
@@ -71,21 +71,21 @@ def select_meshes(records: list[MeshRecord], filters: list[str]) -> list[MeshRec
     return selected
 
 
-def _load_glb_polydata(path: Path) -> vtk.vtkPolyData:
-    """Load GLB geometry with VTK and flatten it to polydata for Vedo."""
-    reader = vtk.vtkGLTFReader()
-    reader.SetFileName(str(path))
-    reader.Update()
+def _load_trimesh_geometry(path: Path) -> trimesh.Trimesh:
+    """Load GLB geometry with trimesh and return one renderable mesh."""
+    loaded = trimesh.load(str(path), force="scene")
+    if isinstance(loaded, trimesh.Scene):
+        geometry = loaded.to_geometry()
+    elif isinstance(loaded, trimesh.Trimesh):
+        geometry = loaded
+    else:
+        raise TypeError(f"Unsupported mesh payload in {path}: {type(loaded)!r}")
 
-    geometry_filter = vtk.vtkCompositeDataGeometryFilter()
-    geometry_filter.SetInputData(reader.GetOutput())
-    geometry_filter.Update()
-
-    polydata = vtk.vtkPolyData()
-    polydata.DeepCopy(geometry_filter.GetOutput())
-    if polydata.GetNumberOfPoints() == 0 or polydata.GetNumberOfCells() == 0:
+    if not isinstance(geometry, trimesh.Trimesh):
+        raise TypeError(f"Loaded geometry is not a Trimesh: {type(geometry)!r}")
+    if len(geometry.vertices) == 0 or len(geometry.faces) == 0:
         raise ValueError(f"No renderable geometry found in {path}")
-    return polydata
+    return geometry
 
 
 def _color_for_name(name: str) -> tuple[float, float, float]:
@@ -135,8 +135,11 @@ def build_vedo_mesh(
     normalize: bool,
     alpha: float,
 ) -> Mesh:
-    """Create a Vedo mesh actor from one GLB."""
-    mesh = Mesh(_load_glb_polydata(record.path))
+    """Create a Vedo mesh actor from one GLB via trimesh."""
+    geometry = _load_trimesh_geometry(record.path)
+    vertices = np.asarray(geometry.vertices, dtype=float)
+    faces = np.asarray(geometry.faces, dtype=int)
+    mesh = Mesh([vertices, faces])
     _center_scale_and_place_mesh(
         mesh,
         center=center,
