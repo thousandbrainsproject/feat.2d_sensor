@@ -152,6 +152,24 @@ def _raycast_closest(origins, directions, vertices, faces):
     return hit_points, hit_mask
 
 
+def _get_gaze_sensor_state(sensors):
+    """Return the sensor state to use for gaze projection."""
+    preferred_keys = ("patch.depth", "patch", "patch_0.depth", "patch_0")
+    for key in preferred_keys:
+        if key in sensors:
+            return sensors[key]
+
+    for key, sensor_state in sensors.items():
+        if key.startswith("patch") and "rotation" in sensor_state:
+            return sensor_state
+
+    for sensor_state in sensors.values():
+        if "rotation" in sensor_state:
+            return sensor_state
+
+    raise KeyError("No sensor with a rotation found for gaze projection")
+
+
 def _compute_gaze_directions(action_sequence, n_steps):
     """Compute (n_steps, 3) gaze directions from action_sequence rotations.
 
@@ -182,8 +200,9 @@ def _compute_gaze_directions(action_sequence, n_steps):
         aq = agent_state["rotation"]
         agent_rot = Rotation.from_quat([aq[1], aq[2], aq[3], aq[0]])
 
-        # Sensor rotation (pitch) — nested under sensors.patch.depth
-        sq = agent_state["sensors"]["patch.depth"]["rotation"]
+        # Sensor rotation (pitch). Legacy camera logs use patch.depth; 2D sensor
+        # module logs use patch.
+        sq = _get_gaze_sensor_state(agent_state["sensors"])["rotation"]
         sensor_rot = Rotation.from_quat([sq[1], sq[2], sq[3], sq[0]])
 
         combined = agent_rot * sensor_rot
