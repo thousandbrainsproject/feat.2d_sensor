@@ -30,12 +30,12 @@ DEFAULT_MESH_DIR = Path("/Users/hlee/tbp/data/compositional_objects_1.1/meshes")
 DEFAULT_WINDOW_SIZE = (1600, 1000)
 TEXTURED_MESH_FILE = "textured.glb"
 MESH_COLORS = {
-    "cube": "dodgerblue3",
-    "disk": "magenta3",
-    "cylinder": "seagreen4",
-    "sphere": "goldenrod",
-    "logo": "purple4",
-    "mug": "tomato3",
+    "cube": (0.00, 0.45, 0.85),
+    "disk": (0.85, 0.15, 0.65),
+    "cylinder": (0.10, 0.55, 0.28),
+    "sphere": (0.95, 0.65, 0.10),
+    "logo": (0.45, 0.20, 0.75),
+    "mug": (0.85, 0.25, 0.15),
 }
 
 
@@ -88,13 +88,13 @@ def _load_glb_polydata(path: Path) -> vtk.vtkPolyData:
     return polydata
 
 
-def _color_for_name(name: str) -> str:
+def _color_for_name(name: str) -> tuple[float, float, float]:
     """Choose a stable display color from the object name."""
     lowered = name.lower()
     for key, color in MESH_COLORS.items():
         if key in lowered:
             return color
-    return "lightblue"
+    return (0.68, 0.85, 0.90)
 
 
 def _center_scale_and_place_mesh(
