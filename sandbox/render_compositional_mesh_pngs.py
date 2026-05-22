@@ -45,10 +45,11 @@ except ModuleNotFoundError:
 
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "compositional_mesh_pngs"
 DEFAULT_IMAGE_SIZE = 1024
+FRONT_CAMERA_DIRECTION = np.array([0.0, -0.22, 1.0])
 
 
 def compute_camera(mesh: Mesh) -> dict:
-    """Return a stable isometric camera framing one centered mesh."""
+    """Return a stable, mostly front-on camera looking slightly down."""
     bounds = np.asarray(mesh.bounds(), dtype=float)
     center = np.array(
         [
@@ -65,7 +66,7 @@ def compute_camera(mesh: Mesh) -> dict:
         ]
     )
     max_extent = max(float(extents.max()), 1e-6)
-    camera_direction = np.array([1.0, -1.0, 0.75])
+    camera_direction = FRONT_CAMERA_DIRECTION.copy()
     camera_direction /= np.linalg.norm(camera_direction)
     camera_pos = center + camera_direction * max_extent * 3.0
 
