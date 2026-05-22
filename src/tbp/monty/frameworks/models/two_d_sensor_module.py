@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import csv
 import logging
 import re
 from pathlib import Path
@@ -55,6 +56,21 @@ from tbp.monty.frameworks.utils.spatial_arithmetics import (
 from tbp.monty.math import DEFAULT_TOLERANCE
 
 logger = logging.getLogger(__name__)
+
+DEBUG_EDGE_PATCH_MANIFEST_FILENAME = "edge_patch_manifest.csv"
+DEBUG_EDGE_PATCH_MANIFEST_FIELDS = [
+    "index",
+    "filename",
+    "sensor_id",
+    "world_x",
+    "world_y",
+    "world_z",
+    "angle_degrees",
+    "edge_strength",
+    "coherence",
+    "is_geometric_edge",
+    "has_edge",
+]
 
 
 class TwoDSensorModule(SensorModule):
@@ -157,6 +173,7 @@ class TwoDSensorModule(SensorModule):
         )
         self._debug_edge_patch_prefix = debug_edge_patch_prefix
         self._debug_edge_patch_index = 0
+        self._debug_edge_patch_manifest_initialized = False
 
     def pre_episode(self) -> None:
         self._snapshot_telemetry.reset()
@@ -167,6 +184,7 @@ class TwoDSensorModule(SensorModule):
         self._previous_2d_location = np.zeros(2)
         self._tangent_frame = None
         self._debug_edge_patch_index = 0
+        self._debug_edge_patch_manifest_initialized = False
 
     def update_state(self, agent: AgentState):
         """Update information about the sensor's location and rotation."""
@@ -286,7 +304,7 @@ class TwoDSensorModule(SensorModule):
 
         edge = self.edge_detector(observation)
         if edge.has_edge:
-            self._save_debug_edge_patch(observation, edge)
+            self._save_debug_edge_patch(observation, edge, state.location.copy())
 
         if not edge.has_edge or (edge.strength and edge.is_geometric_edge):
             return state
@@ -317,6 +335,7 @@ class TwoDSensorModule(SensorModule):
         self,
         observation: SensorObservation,
         edge: EdgeFeatures,
+        world_location: np.ndarray,
     ) -> None:
         """Save an annotated RGB patch for edge-detector debugging.
 
@@ -340,7 +359,56 @@ class TwoDSensorModule(SensorModule):
         image_bgr = cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR)
         if not cv2.imwrite(str(path), image_bgr):
             raise OSError(f"Failed to save debug edge patch to {path}")
+        self._write_debug_edge_patch_manifest_row(
+            filename=filename,
+            sensor_id=sensor_id,
+            world_location=world_location,
+            edge=edge,
+            angle_deg=angle_deg,
+        )
         self._debug_edge_patch_index += 1
+
+    def _write_debug_edge_patch_manifest_row(
+        self,
+        *,
+        filename: str,
+        sensor_id: str,
+        world_location: np.ndarray,
+        edge: EdgeFeatures,
+        angle_deg: float,
+    ) -> None:
+        """Write one manifest row for a saved debug edge patch."""
+        if self._debug_edge_patch_dir is None:
+            return
+
+        manifest_path = (
+            self._debug_edge_patch_dir / DEBUG_EDGE_PATCH_MANIFEST_FILENAME
+        )
+        mode = (
+            "a"
+            if self._debug_edge_patch_manifest_initialized
+            else "w"
+        )
+        with manifest_path.open(mode, newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=DEBUG_EDGE_PATCH_MANIFEST_FIELDS)
+            if not self._debug_edge_patch_manifest_initialized:
+                writer.writeheader()
+                self._debug_edge_patch_manifest_initialized = True
+            writer.writerow(
+                {
+                    "index": self._debug_edge_patch_index,
+                    "filename": filename,
+                    "sensor_id": sensor_id,
+                    "world_x": f"{world_location[0]:.6f}",
+                    "world_y": f"{world_location[1]:.6f}",
+                    "world_z": f"{world_location[2]:.6f}",
+                    "angle_degrees": f"{angle_deg:.6f}",
+                    "edge_strength": f"{edge.strength:.6f}",
+                    "coherence": f"{edge.coherence:.6f}",
+                    "is_geometric_edge": edge.is_geometric_edge,
+                    "has_edge": edge.has_edge,
+                }
+            )
 
     def _annotate_debug_edge_patch(
         self,
