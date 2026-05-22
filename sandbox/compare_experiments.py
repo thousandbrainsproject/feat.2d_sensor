@@ -428,21 +428,21 @@ def main():
     # -- Configuration ----------------------------------------------------------
     experiment_configs = [
         {
-            "name": "0 degree",
-            "path": "/Users/hlee/tbp/results/monty/projects/2d_sensor_inference/disk_inference_2d_20pos_30x_5sigma/eval_stats.csv",
+            "name": "2D-on-2D",
+            "path": "/Users/hlee/tbp/results/monty/projects/2d_sensor_inference/disk_v0_2d_20pos_delta_thresholds/eval_stats.csv",
         },
         {
-            "name": "30 degree",
-            "path": "/Users/hlee/tbp/results/monty/projects/2d_sensor_inference/disk_inference_2d_30deg/eval_stats.csv",
+            "name": "3D-on-3D",
+            "path": "/Users/hlee/tbp/results/monty/projects/2d_sensor_inference/disk_v0_3d_20pos_delta_thresholds/eval_stats.csv",
         },
-        {
-            "name": "45 degree",
-            "path": "/Users/hlee/tbp/results/monty/projects/2d_sensor_inference/disk_inference_2d_45deg/eval_stats.csv",
-        },
-        {
-            "name": "90 degree",
-            "path": "/Users/hlee/tbp/results/monty/projects/2d_sensor_inference/disk_inference_2d_90deg/eval_stats.csv",
-        },
+        # {
+        #     "name": "45 degree",
+        #     "path": "/Users/hlee/tbp/results/monty/projects/2d_sensor_inference/disk_inference_2d_45deg/eval_stats.csv",
+        # },
+        # {
+        #     "name": "90 degree",
+        #     "path": "/Users/hlee/tbp/results/monty/projects/2d_sensor_inference/disk_inference_2d_90deg/eval_stats.csv",
+        # },
         # Add more experiments here as needed:
         # {
         #     "name": "disk_on_cylinder",
