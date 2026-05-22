@@ -45,11 +45,11 @@ except ModuleNotFoundError:
 
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "compositional_mesh_pngs"
 DEFAULT_IMAGE_SIZE = 1024
-FRONT_CAMERA_DIRECTION = np.array([0.0, -0.22, 1.0])
+FRONT_CAMERA_DIRECTION = np.array([0.0, 0.22, 1.0])
 
 
 def compute_camera(mesh: Mesh) -> dict:
-    """Return a stable, mostly front-on camera looking slightly down."""
+    """Return a stable, mostly front-on camera looking slightly up."""
     bounds = np.asarray(mesh.bounds(), dtype=float)
     center = np.array(
         [
