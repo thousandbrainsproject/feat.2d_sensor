@@ -145,7 +145,6 @@ def make_2d_sm(
     delta_thresholds: dict[str, Any] | None = None,
     debug_edge_patch_dir: str | Path | None = None,
     debug_edge_patch_prefix: str = "edge_patch",
-    debug_surface_normal_override: list[float] | np.ndarray | None = None,
 ) -> TwoDSensorModule:
     if features is None:
         features = DEFAULT_FEATURES.copy()
@@ -161,7 +160,6 @@ def make_2d_sm(
         delta_thresholds=delta_thresholds,
         debug_edge_patch_dir=debug_edge_patch_dir,
         debug_edge_patch_prefix=debug_edge_patch_prefix,
-        debug_surface_normal_override=debug_surface_normal_override,
     )
 
 
@@ -683,36 +681,7 @@ class TwoDSensorModuleEdgeTest(unittest.TestCase):
 
 
 class TwoDSensorModuleTangentFrameTest(unittest.TestCase):
-    def test_surface_normal_for_2d_frame_uses_estimated_normal_by_default(self):
-        two_d_sm = make_2d_sm(edge_detector=Mock(return_value=make_no_edge()))
-        estimated_normal = np.array([0.0, np.sqrt(0.5), np.sqrt(0.5)])
-
-        selected_normal = two_d_sm._surface_normal_for_2d_frame(estimated_normal)
-
-        np.testing.assert_allclose(
-            selected_normal, estimated_normal, atol=DEFAULT_TOLERANCE
-        )
-
-    def test_surface_normal_for_2d_frame_uses_normalized_debug_override(self):
-        two_d_sm = make_2d_sm(
-            edge_detector=Mock(return_value=make_no_edge()),
-            debug_surface_normal_override=[0.0, 0.0, 2.0],
-        )
-        estimated_normal = np.array([0.0, np.sqrt(0.5), np.sqrt(0.5)])
-
-        selected_normal = two_d_sm._surface_normal_for_2d_frame(estimated_normal)
-
-        np.testing.assert_allclose(
-            selected_normal, [0.0, 0.0, 1.0], atol=DEFAULT_TOLERANCE
-        )
-
-    def test_surface_normal_debug_override_requires_3d_vector(self):
-        with self.assertRaisesRegex(
-            ValueError, "debug_surface_normal_override must be a 3D vector"
-        ):
-            make_2d_sm(debug_surface_normal_override=[0.0, 0.0])
-
-    def test_step_uses_debug_surface_normal_override_for_2d_frame(self):
+    def test_step_uses_estimated_surface_normal_for_2d_frame(self):
         estimated_normal = np.array([0.0, np.sqrt(0.5), np.sqrt(0.5)])
         estimated_pose = np.array(
             [
@@ -721,10 +690,7 @@ class TwoDSensorModuleTangentFrameTest(unittest.TestCase):
                 [0.0, np.sqrt(0.5), -np.sqrt(0.5)],
             ]
         )
-        two_d_sm = make_2d_sm(
-            edge_detector=Mock(return_value=make_no_edge()),
-            debug_surface_normal_override=[0.0, 0.0, 1.0],
-        )
+        two_d_sm = make_2d_sm(edge_detector=Mock(return_value=make_no_edge()))
         two_d_sm._observation_processor.process = Mock(
             side_effect=[
                 make_message(
@@ -748,11 +714,13 @@ class TwoDSensorModuleTangentFrameTest(unittest.TestCase):
 
         np.testing.assert_allclose(
             two_d_sm._tangent_frame.normal,
-            [0.0, 0.0, 1.0],
+            estimated_normal,
             atol=DEFAULT_TOLERANCE,
         )
         np.testing.assert_allclose(
-            msg.displacement["displacement"], [1.0, 0.0, 0.0]
+            msg.location,
+            [1.0, -np.sqrt(0.5), 0.0],
+            atol=DEFAULT_TOLERANCE,
         )
 
     def test_tangent_frame_transported_not_recreated(self):

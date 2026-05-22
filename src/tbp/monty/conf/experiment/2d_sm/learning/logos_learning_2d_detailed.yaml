@@ -69,7 +69,6 @@ experiment:
         sensor_module_0:
           debug_edge_patch_dir: ${oc.env:MONTY_MODELS}/2d_sensor/${experiment.config.logging.run_name}/debug_edge_patches
           debug_edge_patch_prefix: logos_edge_patch
-          debug_surface_normal_override: [0.0, 0.0, 1.0]
           features:
             - pose_vectors
             - pose_fully_defined
